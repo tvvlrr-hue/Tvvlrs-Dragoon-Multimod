@@ -1,5 +1,7 @@
 package legend.multimod;
 
+import legend.core.gpu.Gpu;
+import legend.core.gpu.Rect4i;
 import legend.core.gte.MV;
 import legend.core.gte.ModelPart10;
 import legend.core.lang.I18nText;
@@ -42,10 +44,13 @@ import static legend.core.GameEngine.RENDERER;
 import static legend.game.FullScreenEffects.startFadeEffect;
 import static legend.game.Graphics.GsGetLw;
 import static legend.game.Menus.deallocateRenderables;
+import static legend.game.Models.adjustModelUvs;
 import static legend.game.Models.animateModel;
 import static legend.game.Models.applyModelRotationAndScale;
 import static legend.game.Models.initModel;
 import static legend.game.Models.loadModelStandardAnimation;
+import static legend.game.Models.vramSlots_8005027c;
+import static legend.game.combat.Battle.combatantTimRects_800fa6e0;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_BACK;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_CONFIRM;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_DOWN;
@@ -93,6 +98,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   // Column 3: 3D Battle Model Preview
   private Model124 activeModel;
+  private Gpu characterGpu;
   private int currentLoadedAdditionFile = -1;
   private int currentLoadedHitIndex = -1;
   private int currentDemonstrationHit = 0;
@@ -238,7 +244,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     this.loadCharacter(0);
 
     // Back hotkey
-    this.addHotkey(new I18nText("lod_core.ui.options_category.back"), INPUT_ACTION_MENU_BACK, this::back);
+    this.addHotkey(new I18nText("lod_core.ui.options_category.back"), INPUT_ACTION_MENU_BACK, this::handleBackAction);
   }
 
   @Override
@@ -273,6 +279,15 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       final float previewCenterZ = 150.0f; // Positive Z to stay well within ortho near plane
       final float scale = this.getCharacterScale(this.selectedCharIndex);
 
+      this.activeModel.coord2_14.flg = 0;
+      if (this.activeModel.modelParts_00 != null) {
+        for (final ModelPart10 part : this.activeModel.modelParts_00) {
+          if (part != null && part.coord2_04 != null) {
+            part.coord2_04.flg = 0;
+          }
+        }
+      }
+
       // Set scale and rotation, apply, THEN set translation
       this.activeModel.coord2_14.transforms.scale.set(scale, scale, scale);
       this.activeModel.coord2_14.transforms.rotate.set(0.10f, -0.45f, 0.0f);
@@ -285,14 +300,17 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
             final ModelPart10 part = this.activeModel.modelParts_00[i];
             if (part != null && part.tmd_08 != null && part.tmd_08.getObj() != null) {
               GsGetLw(part.coord2_04, this.tempLw);
-              RENDERER.queueOrthoModel(part.tmd_08.getObj(), this.tempLw, QueuedModelBattleTmd.class)
+              final QueuedModelBattleTmd queue = RENDERER.queueOrthoModel(part.tmd_08.getObj(), this.tempLw, QueuedModelBattleTmd.class)
                 .lightDirection(this.studioLightDir)
                 .lightColour(this.studioLightColour)
-                .backgroundColour(this.studioAmbient)
+                .backgroundColour(new Vector3f(1.0f, 1.0f, 1.0f))
                 .battleColour(new Vector3f(1.0f, 1.0f, 1.0f))
-                .ctmdFlags((part.attribute_00 & 0x4000_0000) != 0 ? 0x12 : 0x0)
-                .tmdTranslucency(this.activeModel.tpage_108 >>> 5 & 0b11)
-                .texture(GPU.vramTexture15, 1);
+                .ctmdFlags(0)
+                .tmdTranslucency(this.activeModel.tpage_108 >>> 5 & 0b11);
+
+              if (this.characterGpu != null && this.characterGpu.vramTexture15 != null) {
+                queue.texture(this.characterGpu.vramTexture15, 1);
+              }
             }
           }
         }
@@ -395,7 +413,24 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       if (Loader.exists(texPath)) {
         final FileData texData = Loader.loadFileSync(texPath);
         final Tim tim = new Tim(texData);
-        tim.uploadToGpu();
+
+        if (this.characterGpu != null && this.characterGpu.vramTexture15 != null) {
+          this.characterGpu.vramTexture15.delete();
+        }
+        this.characterGpu = new Gpu();
+        this.characterGpu.initVram();
+
+        final Rect4i combatantTimRect = combatantTimRects_800fa6e0[1]; // (320, 256, 64, 256)
+        this.characterGpu.uploadData15(combatantTimRect, tim.getImageData());
+
+        if (tim.hasClut()) {
+          final Rect4i clutRect = tim.getClutRect();
+          clutRect.x = combatantTimRect.x;
+          clutRect.y = combatantTimRect.y + 240;
+          this.characterGpu.uploadData15(clutRect, tim.getClutData());
+        }
+
+        this.characterGpu.updateVramTexture();
       }
 
       // Initial animation: hit 0 of current addition or fallback to combat/0
@@ -413,10 +448,12 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
       if (anim != null) {
         this.activeModel = new Model124("CombatantModel (" + charKey + ")");
+        this.activeModel.uvAdjustments_9d = vramSlots_8005027c[1];
         initModel(this.activeModel, cContainer, anim);
         TmdObjLoader.fromModel("CombatantModel (" + charKey + ")", this.activeModel);
       }
-    } catch (final Exception ignored) {
+    } catch (final Exception e) {
+      e.printStackTrace();
       this.cleanupModel();
     }
   }
@@ -527,8 +564,17 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       } catch (final Exception ignored) {
       }
       this.activeModel = null;
-      this.clearAnimCache();
     }
+    if (this.characterGpu != null) {
+      try {
+        if (this.characterGpu.vramTexture15 != null) {
+          this.characterGpu.vramTexture15.delete();
+        }
+      } catch (final Exception ignored) {
+      }
+      this.characterGpu = null;
+    }
+    this.clearAnimCache();
   }
 
   private void updateHitsList() {
@@ -684,8 +730,25 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     this.unload.run();
   }
 
+  private void handleBackAction() {
+    if (this.focusArea == 2) {
+      this.focusArea = 1;
+      playMenuSound(3);
+      this.clearAnimCache();
+      this.refreshVisuals();
+    } else {
+      this.back();
+    }
+  }
+
   @Override
   protected InputPropagation inputActionPressed(final InputAction action, final boolean repeat) {
+    // Global Back action (Circle / O / Escape / Back)
+    if (action == INPUT_ACTION_MENU_BACK.get() && !repeat) {
+      this.handleBackAction();
+      return InputPropagation.HANDLED;
+    }
+
     // === BUMPER INPUTS (L1/R1 or LB/RB) to cycle characters ===
     if (action == INPUT_ACTION_MENU_PAGE_UP.get()) {
       this.switchCharacter(-1);
@@ -721,15 +784,6 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
       // Left / Right are blocked inside the hits menu
       if (action == INPUT_ACTION_MENU_LEFT.get() || action == INPUT_ACTION_MENU_RIGHT.get()) {
-        return InputPropagation.HANDLED;
-      }
-
-      // Circle (O / Back) -> Return to additions list and whole addition demo
-      if (action == INPUT_ACTION_MENU_BACK.get()) {
-        this.focusArea = 1;
-        playMenuSound(3);
-        this.clearAnimCache();
-        this.refreshVisuals();
         return InputPropagation.HANDLED;
       }
 
@@ -838,13 +892,6 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         this.setHighlightedHit(AdditionButtonType.TRIANGLE);
         return InputPropagation.HANDLED;
       }
-      if (button == InputButton.B) { // Circle (O) -> back
-        this.focusArea = 1;
-        playMenuSound(3);
-        this.clearAnimCache();
-        this.refreshVisuals();
-        return InputPropagation.HANDLED;
-      }
     }
 
     return super.buttonPress(button, repeat);
@@ -874,13 +921,6 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       }
       if (key == InputKey.NUM_3 || key == InputKey.KP_3 || key == InputKey.T) {
         this.setHighlightedHit(AdditionButtonType.TRIANGLE);
-        return InputPropagation.HANDLED;
-      }
-      if (key == InputKey.ESCAPE || key == InputKey.BACKSPACE) {
-        this.focusArea = 1;
-        playMenuSound(3);
-        this.clearAnimCache();
-        this.refreshVisuals();
         return InputPropagation.HANDLED;
       }
     }
