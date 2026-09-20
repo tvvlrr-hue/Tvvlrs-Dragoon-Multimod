@@ -4,6 +4,7 @@ import legend.core.lang.I18nText;
 import legend.core.lang.RawText;
 import legend.core.platform.input.InputAction;
 import legend.core.platform.input.InputMod;
+import legend.game.SItem;
 import legend.game.inventory.screens.HorizontalAlign;
 import legend.game.inventory.screens.InputPropagation;
 import legend.game.inventory.screens.TextColour;
@@ -44,6 +45,13 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
   private final Label additionsHeader;
   private final Label additionsRow;
   private final Checkbox additionsCheckbox;
+
+  private final Label modeRow;
+  private final Button modeButton;
+
+  private final Label configureRow;
+  private final Button configureButton;
+
   private final Label themeRow;
   private final Button themeButton;
 
@@ -59,7 +67,6 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
     startFadeEffect(2, 10);
 
     this.unload = unload;
-
     this.addControl(new Background());
 
     // Title / Header
@@ -81,7 +88,21 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
     this.additionsCheckbox.onToggled(TvvlrMultimod::setAdvancedAdditionsEnabled);
     this.additionsRow = this.addRow(new RawText("  Enabled"), this.additionsCheckbox);
 
-    // Row 2: Controller Colors
+    // Row 2: Addition Mode
+    this.modeButton = new Button(new RawText(TvvlrMultimod.getAdditionMode().name()));
+    this.modeButton.onPressed(() -> {
+      final AdditionMode next = TvvlrMultimod.cycleAdditionMode(1);
+      this.modeButton.setText(new RawText(next.name()));
+      this.updateConfigureRowVisibility();
+    });
+    this.modeRow = this.addRow(new RawText("  Mode"), this.modeButton);
+
+    // Row 3: Configure Additions (visible when Mode == CUSTOM)
+    this.configureButton = new Button(new RawText("Configure"));
+    this.configureButton.onPressed(this::openCustomConfig);
+    this.configureRow = this.addRow(new RawText("  Configure Additions"), this.configureButton);
+
+    // Row 4: Controller Colors
     this.themeButton = new Button(new RawText(TvvlrMultimod.getControllerTheme().name()));
     this.themeButton.onPressed(() -> {
       final ControllerTheme next = TvvlrMultimod.cycleControllerTheme();
@@ -90,29 +111,45 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
     this.themeRow = this.addRow(new RawText("  Controller Colors"), this.themeButton);
 
     // === SECTION 2: RACING MINIGAME ===
-    // Row 3: Section Header
+    // Row 5: Section Header
     this.racingHeader = this.addRow(new RawText("[ RACING MINIGAME ]"), null);
     this.racingHeader.getFontOptions().colour(TextColour.GOLD).shadowColour(TextColour.BLACK);
 
-    // Row 4: Racing Enabled
+    // Row 6: Racing Enabled
     this.racingCheckbox = new Checkbox();
     this.racingCheckbox.setHorizontalAlign(HorizontalAlign.RIGHT);
     this.racingCheckbox.setChecked(TvvlrMultimod.isRacingMinigameEnabled());
     this.racingCheckbox.onToggled(TvvlrMultimod::setRacingMinigameEnabled);
     this.racingRow = this.addRow(new RawText("  Enabled"), this.racingCheckbox);
 
-    // Row 5: Free Entry (No Tickets)
+    // Row 7: Free Entry (No Tickets)
     this.freeEntryCheckbox = new Checkbox();
     this.freeEntryCheckbox.setHorizontalAlign(HorizontalAlign.RIGHT);
     this.freeEntryCheckbox.setChecked(TvvlrMultimod.isFreeRaceEntryEnabled());
     this.freeEntryCheckbox.onToggled(TvvlrMultimod::setFreeRaceEntryEnabled);
     this.freeEntryRow = this.addRow(new RawText("  Free Entry (No Tickets)"), this.freeEntryCheckbox);
 
+    // Set initial visibility for configure row (Row 3)
+    this.updateConfigureRowVisibility();
+
     // Initial highlight on row 1 (Enabled under Advanced Additions)
     this.selectRow(1);
 
     // Back hotkey
     this.addHotkey(new I18nText("lod_core.ui.options_category.back"), INPUT_ACTION_MENU_BACK, this::back);
+  }
+
+  private void updateConfigureRowVisibility() {
+    final boolean isCustom = TvvlrMultimod.getAdditionMode() == AdditionMode.CUSTOM;
+    this.setRowVisible(3, isCustom);
+  }
+
+  private void openCustomConfig() {
+    playMenuSound(2);
+    SItem.menuStack.pushScreen(new CustomAdditionsConfigScreen(() -> {
+      startFadeEffect(2, 10);
+      SItem.menuStack.popScreen();
+    }));
   }
 
   private void selectRow(final int index) {
@@ -131,14 +168,26 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
 
   private void navigateUp() {
     final Label highlighted = this.getHighlightedRow();
+    final boolean configureVisible = TvvlrMultimod.getAdditionMode() == AdditionMode.CUSTOM;
+
     if (highlighted == this.freeEntryRow) {
-      this.selectRow(4);
+      this.selectRow(6);
       playMenuSound(1);
     } else if (highlighted == this.racingRow) {
-      // Skip racingHeader (row 3) -> jump to themeRow (row 2)
-      this.selectRow(2);
+      // Skip racingHeader (row 5) -> jump to themeRow (row 4)
+      this.selectRow(4);
       playMenuSound(1);
     } else if (highlighted == this.themeRow) {
+      if (configureVisible) {
+        this.selectRow(3);
+      } else {
+        this.selectRow(2);
+      }
+      playMenuSound(1);
+    } else if (highlighted == this.configureRow) {
+      this.selectRow(2);
+      playMenuSound(1);
+    } else if (highlighted == this.modeRow) {
       this.selectRow(1);
       playMenuSound(1);
     } else if (highlighted == this.additionsRow) {
@@ -151,29 +200,49 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
 
   private void navigateDown() {
     final Label highlighted = this.getHighlightedRow();
+    final boolean configureVisible = TvvlrMultimod.getAdditionMode() == AdditionMode.CUSTOM;
+
     if (highlighted == this.additionsRow) {
       this.selectRow(2);
       playMenuSound(1);
-    } else if (highlighted == this.themeRow) {
-      // Skip racingHeader (row 3) -> jump to racingRow (row 4)
+    } else if (highlighted == this.modeRow) {
+      if (configureVisible) {
+        this.selectRow(3);
+      } else {
+        this.selectRow(4);
+      }
+      playMenuSound(1);
+    } else if (highlighted == this.configureRow) {
       this.selectRow(4);
       playMenuSound(1);
+    } else if (highlighted == this.themeRow) {
+      // Skip racingHeader (row 5) -> jump to racingRow (row 6)
+      this.selectRow(6);
+      playMenuSound(1);
     } else if (highlighted == this.racingRow) {
-      this.selectRow(5);
+      this.selectRow(7);
       playMenuSound(1);
     } else if (highlighted == this.freeEntryRow) {
       // Bottom selectable row
     } else {
-      this.selectRow(4);
+      this.selectRow(1);
       playMenuSound(1);
     }
   }
 
   private void handleAction(final int direction) {
     final Label highlighted = this.getHighlightedRow();
+
     if (highlighted == this.additionsRow && this.additionsCheckbox != null) {
       playMenuSound(2);
       this.additionsCheckbox.setChecked(!this.additionsCheckbox.isChecked());
+    } else if (highlighted == this.modeRow && this.modeButton != null) {
+      final AdditionMode next = TvvlrMultimod.cycleAdditionMode(direction);
+      this.modeButton.setText(new RawText(next.name()));
+      this.updateConfigureRowVisibility();
+      playMenuSound(2);
+    } else if (highlighted == this.configureRow && this.configureButton != null) {
+      this.openCustomConfig();
     } else if (highlighted == this.themeRow && this.themeButton != null) {
       final ControllerTheme next = TvvlrMultimod.cycleControllerTheme(direction);
       this.themeButton.setText(new RawText(next.name()));
@@ -222,12 +291,15 @@ public class MultimodOptionsScreen extends VerticalLayoutScreen {
     final Label before = this.getHighlightedRow();
     final InputPropagation result = super.mouseMove(x, y);
     final Label after = this.getHighlightedRow();
+
     if (after == this.additionsHeader || after == this.racingHeader) {
       if (before != null && before != this.additionsHeader && before != this.racingHeader) {
         if (before == this.additionsRow) this.selectRow(1);
-        else if (before == this.themeRow) this.selectRow(2);
-        else if (before == this.racingRow) this.selectRow(4);
-        else if (before == this.freeEntryRow) this.selectRow(5);
+        else if (before == this.modeRow) this.selectRow(2);
+        else if (before == this.configureRow) this.selectRow(3);
+        else if (before == this.themeRow) this.selectRow(4);
+        else if (before == this.racingRow) this.selectRow(6);
+        else if (before == this.freeEntryRow) this.selectRow(7);
       } else {
         this.selectRow(1);
       }

@@ -25,8 +25,11 @@ import org.joml.Math;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import legend.game.combat.bent.BattleEntity27c;
+import legend.game.combat.bent.PlayerBattleEntity;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
 
@@ -105,11 +108,46 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
     return FlowControl.CONTINUE;
   }
 
+  private boolean applyCustomHitButtons() {
+    try {
+      if (TvvlrMultimod.currentBattle != null) {
+        final ScriptState<? extends BattleEntity27c> bentState = TvvlrMultimod.currentBattle.currentTurnBent_800c66c8;
+        if (bentState != null && bentState.innerStruct_00 instanceof PlayerBattleEntity pbe) {
+          String addId = null;
+          if (pbe.selectedAddition_58 != null) {
+            addId = pbe.selectedAddition_58.toString();
+          } else if (pbe.addition != null && pbe.addition.getRegistryId() != null) {
+            addId = pbe.addition.getRegistryId().toString();
+          }
+          if (addId != null) {
+            final List<AdditionButtonType> custom = CustomAdditionsStorage.getCustomButtons(addId);
+            if (custom != null && !custom.isEmpty()) {
+              for (int i = 0; i < this.count_30; i++) {
+                if (i < custom.size()) {
+                  this.hitButtonTypes[i] = custom.get(i);
+                } else {
+                  this.hitButtonTypes[i] = AdditionButtonType.CROSS;
+                }
+              }
+              LOGGER.info("AdvancedAdditionOverlaysEffect: Applied custom addition buttons for %s: %s", addId, Arrays.toString(this.hitButtonTypes));
+              return true;
+            }
+          }
+        }
+      }
+    } catch (final Throwable t) {
+      LOGGER.warn("AdvancedAdditionOverlaysEffect: Error resolving custom hit buttons", t);
+    }
+    return false;
+  }
+
   private void initHitButtonTypes() {
     this.hitButtonTypes = new AdditionButtonType[this.count_30];
     if (this.count_30 > 0) {
       if (this.autoCompleteType_3a == 1 || TasmanBattleTutorial.isCounterTutorialActive()) {
         Arrays.fill(this.hitButtonTypes, AdditionButtonType.CROSS);
+      } else if (TvvlrMultimod.getAdditionMode() == AdditionMode.CUSTOM && this.applyCustomHitButtons()) {
+        // Custom mapped buttons successfully applied!
       } else {
         // Rule: Hit 0 is always Cross (X)
         this.hitButtonTypes[0] = AdditionButtonType.CROSS;

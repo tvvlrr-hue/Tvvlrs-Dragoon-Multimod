@@ -21,6 +21,19 @@ public enum AdditionButtonType {
     this.b = b;
   }
 
+  public static AdditionButtonType cycleCustomButton(final AdditionButtonType current, final int direction) {
+    final AdditionButtonType[] options = { CROSS, SQUARE, TRIANGLE };
+    int index = 0;
+    for (int i = 0; i < options.length; i++) {
+      if (options[i] == current) {
+        index = i;
+        break;
+      }
+    }
+    final int next = (index + direction % options.length + options.length) % options.length;
+    return options[next];
+  }
+
   public int getR() {
     return this.getR(ControllerTheme.getActiveTheme());
   }

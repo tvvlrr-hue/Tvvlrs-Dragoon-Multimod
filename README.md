@@ -11,16 +11,19 @@ Accessible directly from Severed Chains' in-game Options menu:
 - Organised into clean visual sections with headers:
   - **`[ ADVANCED ADDITIONS ]`**
     - **Enabled**: Toggle multi-button additions on or off.
+    - **Mode**: Cycle between `DEFAULT`, `RANDOM`, and `CUSTOM`.
+    - **Configure Additions**: Appears when `CUSTOM` mode is active, opening the configuration screen to customize each hit's button prompt (`CROSS`, `SQUARE`, `TRIANGLE`) for every addition across all party members.
     - **Controller Colors**: Cycle theme colors (`AUTO`, `PLAYSTATION`, `XBOX`, `SWITCH`).
   - **`[ RACING MINIGAME ]`**
     - **Enabled**: Toggle the Lohan racing attraction on or off.
     - **Free Entry (No Tickets)**: Toggle free test racing without needing tickets.
 - **Smart Navigation**: Smoothly skips section headers when navigating via D-Pad or Arrow Keys; supports gamepad Confirm / Cancel, mouse clicks, and bidirectional cycling.
-- Automatically saves preferences to `config.dcnf`.
+- Automatically saves preferences to `config.dcnf` and custom hit sequences to `tvvlr_custom_additions.json`.
 
 ### 2. Advanced Additions Combat System
 - Overhauls the battle addition timing system to support multi-button prompts (`Square` and `Triangle` alongside `Cross`).
 - **Dynamic Controller Themes**: Color cues styled after PlayStation, Xbox, and Nintendo Switch layouts, or auto-detected based on connected controllers.
+- **Custom Additions Mappings**: When `CUSTOM` mode is enabled, additions use your saved custom button sequences for each hit in combat.
 - Full compatibility with addition practice tutorials in Tasman.
 
 ### 3. Lohan Racing Minigame
@@ -49,6 +52,9 @@ Accessible directly from Severed Chains' in-game Options menu:
 ├── src/legend/multimod/
 │   ├── TvvlrMultimod.java                  # Main mod entry, config registrar, and menu injection
 │   ├── MultimodOptionsScreen.java          # In-game sectional options UI screen
+│   ├── CustomAdditionsConfigScreen.java    # Screen for configuring addition hit button mappings
+│   ├── CustomAdditionsStorage.java         # Data storage & JSON persistence for custom additions
+│   ├── AdditionMode.java                   # Addition mode enum (DEFAULT, RANDOM, CUSTOM)
 │   ├── AdditionButtonType.java             # Addition button definitions and color sets
 │   ├── AdvancedAdditionOverlaysEffect.java  # Combat additions overlay renderer & evaluator
 │   ├── ControllerTheme.java                # Controller button theme detection and resolution

@@ -90,11 +90,19 @@ public class TvvlrMultimod {
     CONFIG_REGISTRAR.register("controller_theme",
       () -> new EnumConfigEntry<>(ControllerTheme.class, ControllerTheme.AUTO, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY));
 
+  public static final RegistryDelegate<EnumConfigEntry<AdditionMode>> ADDITION_MODE =
+    CONFIG_REGISTRAR.register("addition_mode",
+      () -> new EnumConfigEntry<>(AdditionMode.class, AdditionMode.DEFAULT, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY));
+
   // Fallback values if config is unavailable
   private static boolean advancedAdditionsEnabledFallback = true;
   private static boolean racingMinigameEnabledFallback = true;
   private static boolean freeRaceEntryFallback = false;
   private static ControllerTheme controllerThemeFallback = ControllerTheme.AUTO;
+  private static AdditionMode additionModeFallback = AdditionMode.DEFAULT;
+
+  // Active battle tracking
+  public static Battle currentBattle = null;
 
   // Options menu tracking
   private static final Set<OptionsCategoryScreen> HOOKED_OPTIONS_SCREENS =
@@ -104,6 +112,7 @@ public class TvvlrMultimod {
   public TvvlrMultimod() {
     EVENTS.register(this);
     TasmanBattleTutorial.init();
+    CustomAdditionsStorage.load();
     LOGGER.info("TvvlrMultimod: Initialized and registered with EVENTS.");
   }
 
@@ -220,6 +229,40 @@ public class TvvlrMultimod {
     return next;
   }
 
+  public static AdditionMode getAdditionMode() {
+    try {
+      if (CONFIG != null && ADDITION_MODE != null && ADDITION_MODE.isValid()) {
+        final AdditionMode mode = CONFIG.getConfig(ADDITION_MODE.get());
+        if (mode != null) {
+          return mode;
+        }
+      }
+    } catch (final Throwable ignored) {
+    }
+    return additionModeFallback;
+  }
+
+  public static void setAdditionMode(final AdditionMode mode) {
+    additionModeFallback = mode;
+    try {
+      if (CONFIG != null && ADDITION_MODE != null && ADDITION_MODE.isValid()) {
+        CONFIG.setConfig(ADDITION_MODE.get(), mode);
+      }
+      persistConfig();
+      LOGGER.info("TvvlrMultimod: Addition Mode set to %s", mode);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error setting addition mode", t);
+    }
+  }
+
+  public static AdditionMode cycleAdditionMode(final int direction) {
+    final AdditionMode current = getAdditionMode();
+    final AdditionMode[] modes = AdditionMode.values();
+    final int nextIndex = (current.ordinal() + direction % modes.length + modes.length) % modes.length;
+    final AdditionMode next = modes[nextIndex];
+    setAdditionMode(next);
+    return next;
+  }
 
   private static void persistConfig() {
     try {
@@ -275,6 +318,7 @@ public class TvvlrMultimod {
 
   @EventListener
   public void onBattleStarted(final BattleStartedEvent event) {
+    currentBattle = event.battle;
     if (isAdvancedAdditionsEnabled()) {
       TasmanBattleTutorial.onBattleStarted(event);
     }
@@ -282,10 +326,12 @@ public class TvvlrMultimod {
 
   @EventListener
   public void onBattleEnded(final BattleEndedEvent event) {
+    currentBattle = null;
     if (isAdvancedAdditionsEnabled()) {
       TasmanBattleTutorial.onBattleEnded(event);
     }
   }
+
 
   @EventListener
   public void onSubmapLoad(final SubmapLoadEvent event) {
