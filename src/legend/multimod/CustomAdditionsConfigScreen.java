@@ -8,7 +8,7 @@ import legend.core.platform.input.InputAction;
 import legend.core.platform.input.InputButton;
 import legend.core.platform.input.InputKey;
 import legend.core.platform.input.InputMod;
-import legend.core.renderer.QueuedModelTmd;
+import legend.core.renderer.QueuedModelBattleTmd;
 import legend.game.additions.Addition;
 import legend.game.inventory.screens.HorizontalAlign;
 import legend.game.inventory.screens.InputPropagation;
@@ -27,24 +27,25 @@ import legend.game.unpacker.FileData;
 import legend.game.unpacker.Loader;
 import legend.game.unpacker.Unpacker;
 import legend.lodmod.additions.RetailAddition;
+import org.joml.Matrix3f;
 import org.joml.Vector3f;
 import org.legendofdragoon.modloader.registries.RegistryId;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
+import static legend.core.GameEngine.GPU;
+import static legend.core.GameEngine.REGISTRIES;
 import static legend.core.GameEngine.RENDERER;
 import static legend.game.FullScreenEffects.startFadeEffect;
 import static legend.game.Graphics.GsGetLw;
-import static legend.game.Graphics.lightColourMatrix_800c3508;
-import static legend.game.Graphics.lightDirectionMatrix_800c34e8;
 import static legend.game.Menus.deallocateRenderables;
 import static legend.game.Models.animateModel;
 import static legend.game.Models.applyModelRotationAndScale;
 import static legend.game.Models.initModel;
 import static legend.game.Models.loadModelStandardAnimation;
-import static legend.core.GameEngine.REGISTRIES;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_BACK;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_CONFIRM;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_DOWN;
@@ -65,7 +66,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
   private int selectedAdditionIndex = 0;
   private int selectedHitIndex = 0;
 
-  // Focus Area: 1 = Additions list, 2 = Hits side menu, 3 = Save button
+  // Focus Area: 1 = Additions list, 2 = Hits panel, 3 = Save button
   private int focusArea = 1;
 
   // Header controls
@@ -77,27 +78,33 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
   // Column headers
   private final Label additionsHeader;
   private final Label hitsHeader;
+  private final Label hitsSubHeader;
   private final Label previewHeader;
   private final Label previewHitLabel;
 
-  // Additions column (left)
+  // Column 1: Additions (Left: x = 12..124)
   private final Button[] additionButtons = new Button[MAX_ADDITION_SLOTS];
 
-  // Hits column (middle)
+  // Column 2: Hits (Middle: x = 132..244)
   private final Label[] hitLabels = new Label[MAX_HIT_SLOTS];
   private final Button[] hitButtons = new Button[MAX_HIT_SLOTS];
-  private final Label hitHintLabel;
+  private final Label hitHintLabel1;
+  private final Label hitHintLabel2;
+
+  // Column 3: 3D Battle Model Preview
+  private Model124 activeModel;
+  private int currentLoadedAdditionFile = -1;
+  private int currentLoadedHitIndex = -1;
+  private int currentDemonstrationHit = 0;
+  private final TmdAnimationFile[] currentAdditionAnimCache = new TmdAnimationFile[16];
+  private final MV tempLw = new MV();
+  private final Matrix3f studioLightDir = new Matrix3f().identity();
+  private final Matrix3f studioLightColour = new Matrix3f().identity();
+  private final Vector3f studioAmbient = new Vector3f(0.85f, 0.85f, 0.85f);
 
   // Bottom action
   private final Button saveButton;
   private final Label statusLabel;
-
-  // 3D Battle Model Preview
-  private Model124 activeModel;
-  private int currentLoadedAdditionFile = -1;
-  private int currentLoadedHitIndex = -1;
-  private final MV tempLw = new MV();
-  private final Vector3f ambientLight = new Vector3f(1.0f, 1.0f, 1.0f);
 
   public CustomAdditionsConfigScreen(final Runnable unload) {
     deallocateRenderables(0xff);
@@ -106,64 +113,75 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     this.unload = unload;
     this.addControl(new Background());
 
-    final int screenWidth = this.getWidth();
+    final int screenWidth = this.getWidth(); // 368
 
-    // Screen Title
+    // Screen Title (y = 6)
     this.titleLabel = this.addControl(new Label(new RawText("CUSTOM ADDITIONS CONFIGURATION")));
     this.titleLabel.getFontOptions().horizontalAlign(HorizontalAlign.CENTRE);
     this.titleLabel.getFontOptions().colour(TextColour.GOLD).shadowColour(TextColour.BLACK);
     this.titleLabel.setPos(0, 6);
     this.titleLabel.setWidth(screenWidth);
 
-    // Character Selector with Bumper Indicators
-    this.prevCharButton = this.addControl(new Button(new RawText("<")));
-    this.prevCharButton.setPos(20, 20);
-    this.prevCharButton.setSize(20, 12);
+    // Character Selector with Bumper Indicators (y = 20)
+    this.prevCharButton = this.addControl(new Button(new RawText("[L1]")));
+    this.prevCharButton.setPos(40, 20);
+    this.prevCharButton.setSize(28, 12);
+    this.prevCharButton.getFontOptions().colour(TextColour.LIME);
     this.prevCharButton.onPressed(() -> this.switchCharacter(-1));
 
     this.charLabel = this.addControl(new Label(new RawText("")));
     this.charLabel.getFontOptions().horizontalAlign(HorizontalAlign.CENTRE);
     this.charLabel.getFontOptions().colour(TextColour.YELLOW).shadowColour(TextColour.BLACK);
-    this.charLabel.setPos(44, 20);
-    this.charLabel.setWidth(screenWidth - 88);
+    this.charLabel.setPos(70, 20);
+    this.charLabel.setWidth(screenWidth - 140);
 
-    this.nextCharButton = this.addControl(new Button(new RawText(">")));
-    this.nextCharButton.setPos(screenWidth - 40, 20);
-    this.nextCharButton.setSize(20, 12);
+    this.nextCharButton = this.addControl(new Button(new RawText("[R1]")));
+    this.nextCharButton.setPos(screenWidth - 68, 20);
+    this.nextCharButton.setSize(28, 12);
+    this.nextCharButton.getFontOptions().colour(TextColour.LIME);
     this.nextCharButton.onPressed(() -> this.switchCharacter(1));
 
-    // Column Headers (3 columns: Additions, Hits Config, Hit Preview)
+    // Column 1 Header: ADDITIONS (x = 12..124)
     this.additionsHeader = this.addControl(new Label(new RawText("ADDITIONS")));
     this.additionsHeader.getFontOptions().colour(TextColour.GOLD).shadowColour(TextColour.BLACK);
-    this.additionsHeader.setPos(12, 35);
-    this.additionsHeader.setWidth(118);
+    this.additionsHeader.setPos(12, 36);
+    this.additionsHeader.setWidth(112);
 
+    // Column 2 Headers: HITS CONFIG (x = 132..244)
     this.hitsHeader = this.addControl(new Label(new RawText("HITS CONFIG")));
     this.hitsHeader.getFontOptions().colour(TextColour.GOLD).shadowColour(TextColour.BLACK);
-    this.hitsHeader.setPos(136, 35);
-    this.hitsHeader.setWidth(118);
+    this.hitsHeader.setPos(132, 36);
+    this.hitsHeader.setWidth(112);
 
-    this.previewHeader = this.addControl(new Label(new RawText("HIT PREVIEW")));
+    this.hitsSubHeader = this.addControl(new Label(new RawText("")));
+    this.hitsSubHeader.getFontOptions().colour(TextColour.CYAN).shadowColour(TextColour.BLACK);
+    this.hitsSubHeader.setPos(132, 48);
+    this.hitsSubHeader.setWidth(112);
+
+    // Column 3 Headers: PREVIEW (x = 250..362)
+    this.previewHeader = this.addControl(new Label(new RawText("PREVIEW")));
+    this.previewHeader.getFontOptions().horizontalAlign(HorizontalAlign.CENTRE);
     this.previewHeader.getFontOptions().colour(TextColour.GOLD).shadowColour(TextColour.BLACK);
-    this.previewHeader.setPos(260, 35);
-    this.previewHeader.setWidth(116);
+    this.previewHeader.setPos(250, 36);
+    this.previewHeader.setWidth(112);
 
-    this.previewHitLabel = this.addControl(new Label(new RawText("")));
-    this.previewHitLabel.getFontOptions().colour(TextColour.YELLOW).shadowColour(TextColour.BLACK);
-    this.previewHitLabel.setPos(260, 47);
-    this.previewHitLabel.setWidth(116);
+    this.previewHitLabel = this.addControl(new Label(new RawText("[ FULL COMBO ]")));
+    this.previewHitLabel.getFontOptions().horizontalAlign(HorizontalAlign.CENTRE);
+    this.previewHitLabel.getFontOptions().colour(TextColour.LIME).shadowColour(TextColour.BLACK);
+    this.previewHitLabel.setPos(250, 48);
+    this.previewHitLabel.setWidth(112);
 
-    // Additions Buttons (Left column)
+    // Additions Buttons (Left column: x = 12..124)
     for (int i = 0; i < MAX_ADDITION_SLOTS; i++) {
       final int slot = i;
       final Button btn = new Button(new RawText(""));
-      btn.setPos(12, 50 + i * 14);
-      btn.setSize(118, 12);
+      btn.setPos(12, 50 + i * 15);
+      btn.setSize(112, 13);
       btn.onPressed(() -> {
         this.selectedAdditionIndex = slot;
-        // Clicking an addition enters its hits side menu
         this.focusArea = 2;
         this.selectedHitIndex = 0;
+        this.clearAnimCache();
         this.updateHitsList();
         this.refreshVisuals();
         playMenuSound(2);
@@ -171,17 +189,18 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       this.additionButtons[i] = this.addControl(btn);
     }
 
-    // Hits Rows (Middle column)
+    // Hits Rows (Middle column: x = 130..242)
+    // Label: x = 130, width = 50. Button: x = 182, width = 60. ZERO OVERLAP!
     for (int i = 0; i < MAX_HIT_SLOTS; i++) {
       final int hitSlot = i;
       final Label label = new Label(new RawText("Hit " + (i + 1) + ":"));
-      label.setPos(136, 50 + i * 14);
-      label.setWidth(42);
+      label.setPos(130, 60 + i * 14);
+      label.setWidth(50);
       this.hitLabels[i] = this.addControl(label);
 
-      final Button btn = new Button(new RawText("[ CROSS ]"));
-      btn.setPos(178, 50 + i * 14);
-      btn.setSize(76, 12);
+      final Button btn = new Button(new RawText("CROSS"));
+      btn.setPos(182, 60 + i * 14);
+      btn.setSize(60, 13);
       btn.onPressed(() -> {
         this.selectedHitIndex = hitSlot;
         this.focusArea = 2;
@@ -190,24 +209,29 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       this.hitButtons[i] = this.addControl(btn);
     }
 
-    // Hint label for setting hits
-    this.hitHintLabel = this.addControl(new Label(new RawText("X/Sq/Tri: Map  O: Back")));
-    this.hitHintLabel.getFontOptions().colour(TextColour.GREY).shadowColour(TextColour.BLACK);
-    this.hitHintLabel.setPos(134, 138);
-    this.hitHintLabel.setWidth(122);
+    // Help text below hits (x = 132)
+    this.hitHintLabel1 = this.addControl(new Label(new RawText("X/Sq/Tri: Map Hit")));
+    this.hitHintLabel1.getFontOptions().colour(TextColour.GREY).shadowColour(TextColour.BLACK);
+    this.hitHintLabel1.setPos(132, 166);
+    this.hitHintLabel1.setWidth(112);
 
-    // Save Button
+    this.hitHintLabel2 = this.addControl(new Label(new RawText("O: Back to Combo")));
+    this.hitHintLabel2.getFontOptions().colour(TextColour.GREY).shadowColour(TextColour.BLACK);
+    this.hitHintLabel2.setPos(132, 178);
+    this.hitHintLabel2.setWidth(112);
+
+    // Save Button (y = 198)
     this.saveButton = this.addControl(new Button(new RawText("SAVE CONFIGURATION")));
-    this.saveButton.setPos((screenWidth - 160) / 2, 162);
-    this.saveButton.setSize(160, 14);
+    this.saveButton.setPos((screenWidth - 170) / 2, 198);
+    this.saveButton.setSize(170, 14);
     this.saveButton.getFontOptions().colour(TextColour.LIME);
     this.saveButton.onPressed(this::save);
 
-    // Status message label
+    // Status message label (y = 216)
     this.statusLabel = this.addControl(new Label(new RawText("")));
     this.statusLabel.getFontOptions().horizontalAlign(HorizontalAlign.CENTRE);
     this.statusLabel.getFontOptions().colour(TextColour.LIME).shadowColour(TextColour.BLACK);
-    this.statusLabel.setPos(0, 180);
+    this.statusLabel.setPos(0, 216);
     this.statusLabel.setWidth(screenWidth);
 
     // Initial load
@@ -228,15 +252,32 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     if (this.activeModel != null) {
       animateModel(this.activeModel, 2);
 
-      final float previewCenterX = 318.0f;
-      final float previewCenterY = 155.0f; // character feet ground level
+      // Whole addition demonstration flow when browsing additions (focusArea == 1)
+      if (this.focusArea == 1 && this.activeModel.remainingFrames_9e == 0) {
+        final CustomAdditionsStorage.CharacterCategory charCat = CustomAdditionsStorage.CHARACTERS.get(this.selectedCharIndex);
+        if (this.selectedAdditionIndex < charCat.additions.size()) {
+          final CustomAdditionsStorage.AdditionDefinition def = charCat.additions.get(this.selectedAdditionIndex);
+          final int totalComboHits = def.hitCount + 1;
+          this.currentDemonstrationHit = (this.currentDemonstrationHit + 1) % totalComboHits;
+          final TmdAnimationFile nextAnim = this.loadHitAnimation(this.selectedCharIndex, this.selectedAdditionIndex, this.currentDemonstrationHit);
+          if (nextAnim != null) {
+            loadModelStandardAnimation(this.activeModel, nextAnim);
+            this.activeModel.animationState_9c = 1;
+          }
+          this.previewHitLabel.setText(new RawText("[ COMBO " + (this.currentDemonstrationHit + 1) + "/" + totalComboHits + " ]"));
+        }
+      }
+
+      final float previewCenterX = 306.0f;
+      final float previewCenterY = 162.0f; // character feet ground level
+      final float previewCenterZ = 150.0f; // Positive Z to stay well within ortho near plane
       final float scale = this.getCharacterScale(this.selectedCharIndex);
 
-      this.activeModel.coord2_14.coord.transfer.set(previewCenterX, previewCenterY, 50.0f);
+      // Set scale and rotation, apply, THEN set translation
       this.activeModel.coord2_14.transforms.scale.set(scale, scale, scale);
-      // Angle character slightly forward-left to face the viewer and button mapping menu
-      this.activeModel.coord2_14.transforms.rotate.set(0.10f, -0.65f, 0.0f);
+      this.activeModel.coord2_14.transforms.rotate.set(0.10f, -0.45f, 0.0f);
       applyModelRotationAndScale(this.activeModel);
+      this.activeModel.coord2_14.coord.transfer.set(previewCenterX, previewCenterY, previewCenterZ);
 
       if (this.activeModel.modelParts_00 != null) {
         for (int i = 0; i < this.activeModel.modelParts_00.length; i++) {
@@ -244,11 +285,14 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
             final ModelPart10 part = this.activeModel.modelParts_00[i];
             if (part != null && part.tmd_08 != null && part.tmd_08.getObj() != null) {
               GsGetLw(part.coord2_04, this.tempLw);
-              RENDERER.queueOrthoModel(part.tmd_08.getObj(), this.tempLw, QueuedModelTmd.class)
-                .depthOffset(-200.0f)
-                .lightDirection(lightDirectionMatrix_800c34e8)
-                .lightColour(lightColourMatrix_800c3508)
-                .backgroundColour(this.ambientLight);
+              RENDERER.queueOrthoModel(part.tmd_08.getObj(), this.tempLw, QueuedModelBattleTmd.class)
+                .lightDirection(this.studioLightDir)
+                .lightColour(this.studioLightColour)
+                .backgroundColour(this.studioAmbient)
+                .battleColour(new Vector3f(1.0f, 1.0f, 1.0f))
+                .ctmdFlags((part.attribute_00 & 0x4000_0000) != 0 ? 0x12 : 0x0)
+                .tmdTranslucency(this.activeModel.tpage_108 >>> 5 & 0b11)
+                .texture(GPU.vramTexture15, 1);
             }
           }
         }
@@ -263,6 +307,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     this.selectedAdditionIndex = 0;
     this.selectedHitIndex = 0;
     this.focusArea = 1;
+    this.clearAnimCache();
     this.loadCharacter(this.selectedCharIndex);
   }
 
@@ -272,7 +317,10 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     final String lBumper = theme == ControllerTheme.XBOX ? "[LB]" : (theme == ControllerTheme.SWITCH ? "[L]" : "[L1]");
     final String rBumper = theme == ControllerTheme.XBOX ? "[RB]" : (theme == ControllerTheme.SWITCH ? "[R]" : "[R1]");
     final int total = CustomAdditionsStorage.CHARACTERS.size();
-    this.charLabel.setText(new RawText(lBumper + "  < " + character.characterName.toUpperCase() + " (" + (this.selectedCharIndex + 1) + "/" + total + ") >  " + rBumper));
+
+    this.prevCharButton.setText(new RawText(lBumper));
+    this.charLabel.setText(new RawText("<  " + character.characterName.toUpperCase() + " (" + (this.selectedCharIndex + 1) + "/" + total + ")  >"));
+    this.nextCharButton.setText(new RawText(rBumper));
   }
 
   private void loadCharacter(final int index) {
@@ -284,8 +332,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
     this.selectedAdditionIndex = 0;
     this.selectedHitIndex = 0;
-    this.currentLoadedAdditionFile = -1;
-    this.currentLoadedHitIndex = -1;
+    this.clearAnimCache();
 
     this.loadCharacterModel(index);
 
@@ -323,8 +370,8 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       case 2 -> 0.26f; // Rose
       case 3 -> 0.26f; // Haschel
       case 4 -> 0.25f; // Albert
-      case 5 -> 0.29f; // Meru
-      case 6 -> 0.21f; // Kongol
+      case 5 -> 0.28f; // Meru
+      case 6 -> 0.20f; // Kongol
       default -> 0.25f;
     };
   }
@@ -374,7 +421,18 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     }
   }
 
+  private void clearAnimCache() {
+    Arrays.fill(this.currentAdditionAnimCache, null);
+    this.currentLoadedAdditionFile = -1;
+    this.currentLoadedHitIndex = -1;
+    this.currentDemonstrationHit = 0;
+  }
+
   private TmdAnimationFile loadHitAnimation(final int charIndex, final int additionIndex, final int hitIndex) {
+    if (hitIndex >= 0 && hitIndex < this.currentAdditionAnimCache.length && this.currentAdditionAnimCache[hitIndex] != null) {
+      return this.currentAdditionAnimCache[hitIndex];
+    }
+
     try {
       final CustomAdditionsStorage.CharacterCategory charCat = CustomAdditionsStorage.CHARACTERS.get(charIndex);
       if (additionIndex >= charCat.additions.size()) {
@@ -397,7 +455,11 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
           if (data.readInt(0x4) == 0x1a45_5042) {
             data = new FileData(Unpacker.decompress(data));
           }
-          return new TmdAnimationFile(data);
+          final TmdAnimationFile anim = new TmdAnimationFile(data);
+          if (hitIndex >= 0 && hitIndex < this.currentAdditionAnimCache.length) {
+            this.currentAdditionAnimCache[hitIndex] = anim;
+          }
+          return anim;
         }
       }
     } catch (final Exception ignored) {
@@ -425,26 +487,36 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         return;
       }
 
-      final int hitToPreview = this.focusArea == 2 ? this.selectedHitIndex : 0;
-      if (retail.additionFile == this.currentLoadedAdditionFile && hitToPreview == this.currentLoadedHitIndex) {
-        return;
+      if (this.focusArea == 2) {
+        // In hits panel: demonstrate ONLY the hit currently hovered
+        final int hitToPreview = this.selectedHitIndex;
+        if (retail.additionFile != this.currentLoadedAdditionFile || hitToPreview != this.currentLoadedHitIndex) {
+          final TmdAnimationFile anim = this.loadHitAnimation(this.selectedCharIndex, this.selectedAdditionIndex, hitToPreview);
+          if (anim != null) {
+            loadModelStandardAnimation(this.activeModel, anim);
+            this.activeModel.animationState_9c = 1;
+            this.currentLoadedAdditionFile = retail.additionFile;
+            this.currentLoadedHitIndex = hitToPreview;
+          }
+        }
+        this.previewHitLabel.setText(new RawText("[ HIT " + (hitToPreview + 1) + " OF " + def.hitCount + " ]"));
+        this.previewHitLabel.getFontOptions().colour(TextColour.CYAN);
+      } else {
+        // In additions panel: demonstrate WHOLE addition
+        if (retail.additionFile != this.currentLoadedAdditionFile) {
+          this.currentDemonstrationHit = 0;
+          final TmdAnimationFile anim = this.loadHitAnimation(this.selectedCharIndex, this.selectedAdditionIndex, 0);
+          if (anim != null) {
+            loadModelStandardAnimation(this.activeModel, anim);
+            this.activeModel.animationState_9c = 1;
+            this.currentLoadedAdditionFile = retail.additionFile;
+            this.currentLoadedHitIndex = 0;
+          }
+        }
+        this.previewHitLabel.setText(new RawText("[ COMBO " + (this.currentDemonstrationHit + 1) + "/" + (def.hitCount + 1) + " ]"));
+        this.previewHitLabel.getFontOptions().colour(TextColour.LIME);
       }
-
-      final TmdAnimationFile anim = this.loadHitAnimation(this.selectedCharIndex, this.selectedAdditionIndex, hitToPreview);
-      if (anim != null) {
-        loadModelStandardAnimation(this.activeModel, anim);
-        this.activeModel.animationState_9c = 1;
-        this.currentLoadedAdditionFile = retail.additionFile;
-        this.currentLoadedHitIndex = hitToPreview;
-      }
-      this.updatePreviewLabel(def.displayName, hitToPreview, def.hitCount);
     } catch (final Exception ignored) {
-    }
-  }
-
-  private void updatePreviewLabel(final String additionName, final int hitIndex, final int totalHits) {
-    if (this.previewHitLabel != null) {
-      this.previewHitLabel.setText(new RawText("Hit " + (hitIndex + 1) + " of " + totalHits));
     }
   }
 
@@ -455,8 +527,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       } catch (final Exception ignored) {
       }
       this.activeModel = null;
-      this.currentLoadedAdditionFile = -1;
-      this.currentLoadedHitIndex = -1;
+      this.clearAnimCache();
     }
   }
 
@@ -468,7 +539,13 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     final CustomAdditionsStorage.AdditionDefinition addition = character.additions.get(this.selectedAdditionIndex);
     final List<AdditionButtonType> buttons = CustomAdditionsStorage.getCustomButtons(addition.id);
 
-    this.hitsHeader.setText(new RawText(addition.displayName.toUpperCase() + " (" + addition.hitCount + " HITS)"));
+    // Truncate addition name if needed so it stays cleanly in 112px
+    String addName = addition.displayName.toUpperCase();
+    if (addName.length() > 14) {
+      addName = addName.substring(0, 14);
+    }
+    this.hitsHeader.setText(new RawText(addName));
+    this.hitsSubHeader.setText(new RawText("(" + addition.hitCount + " HITS)"));
 
     for (int i = 0; i < MAX_HIT_SLOTS; i++) {
       if (i < addition.hitCount) {
@@ -479,7 +556,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         if (buttons != null && i < buttons.size()) {
           currentBtn = buttons.get(i);
         }
-        this.hitButtons[i].setText(new RawText("[ " + currentBtn.name() + " ]"));
+        this.hitButtons[i].setText(new RawText(currentBtn.name()));
         this.applyButtonColour(this.hitButtons[i], currentBtn);
       } else {
         this.hitLabels[i].hide();
@@ -518,15 +595,12 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       buttons.add(AdditionButtonType.CROSS);
     }
 
-    if (this.selectedHitIndex >= 0 && this.selectedHitIndex < addition.hitCount) {
-      buttons.set(this.selectedHitIndex, type);
-      CustomAdditionsStorage.setCustomButtons(addition.id, buttons);
-      playMenuSound(2);
+    buttons.set(this.selectedHitIndex, type);
+    CustomAdditionsStorage.setCustomButtons(addition.id, buttons);
 
-      this.updateHitsList();
-      this.refreshVisuals();
-      this.statusLabel.setText(new RawText(""));
-    }
+    playMenuSound(2);
+    this.updateHitsList();
+    this.refreshVisuals();
   }
 
   private void cycleHighlightedHit(final int direction) {
@@ -545,7 +619,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     final CustomAdditionsStorage.CharacterCategory character = CustomAdditionsStorage.CHARACTERS.get(this.selectedCharIndex);
     final CustomAdditionsStorage.AdditionDefinition addition = character.additions.get(this.selectedAdditionIndex);
 
-    // Style addition buttons
+    // Style addition buttons (Column 1)
     for (int i = 0; i < character.additions.size(); i++) {
       final CustomAdditionsStorage.AdditionDefinition add = character.additions.get(i);
       if (i == this.selectedAdditionIndex) {
@@ -562,7 +636,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       }
     }
 
-    // Style hit buttons and labels
+    // Style hit rows (Column 2)
     final List<AdditionButtonType> buttons = CustomAdditionsStorage.getCustomButtons(addition.id);
     for (int i = 0; i < addition.hitCount; i++) {
       AdditionButtonType btnType = AdditionButtonType.CROSS;
@@ -573,11 +647,11 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       if (this.focusArea == 2 && i == this.selectedHitIndex) {
         this.hitLabels[i].setText(new RawText("> Hit " + (i + 1) + ":"));
         this.hitLabels[i].getFontOptions().colour(TextColour.GOLD);
-        this.hitButtons[i].setText(new RawText("> [ " + btnType.name() + " ] <"));
+        this.hitButtons[i].setText(new RawText("> " + btnType.name() + " <"));
       } else {
         this.hitLabels[i].setText(new RawText("  Hit " + (i + 1) + ":"));
         this.hitLabels[i].getFontOptions().colour(TextColour.WHITE);
-        this.hitButtons[i].setText(new RawText("[ " + btnType.name() + " ]"));
+        this.hitButtons[i].setText(new RawText(btnType.name()));
       }
       this.applyButtonColour(this.hitButtons[i], btnType);
     }
@@ -591,7 +665,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       this.saveButton.getFontOptions().colour(TextColour.LIME);
     }
 
-    // Synchronize 3D model animation with current hit
+    // Synchronize 3D model animation with current view mode
     this.updateModelAnimation();
   }
 
@@ -599,7 +673,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     CustomAdditionsStorage.save();
     playMenuSound(2);
     this.statusLabel.setText(new RawText("Custom addition mappings saved successfully!"));
-    // After saving, return to additions list
+    // After saving, return focus to additions list
     this.focusArea = 1;
     this.refreshVisuals();
   }
@@ -612,7 +686,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   @Override
   protected InputPropagation inputActionPressed(final InputAction action, final boolean repeat) {
-    // === BUMPER INPUTS (L1/R1) to cycle characters ===
+    // === BUMPER INPUTS (L1/R1 or LB/RB) to cycle characters ===
     if (action == INPUT_ACTION_MENU_PAGE_UP.get()) {
       this.switchCharacter(-1);
       return InputPropagation.HANDLED;
@@ -622,7 +696,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       return InputPropagation.HANDLED;
     }
 
-    // === HITS SIDE MENU FOCUS ===
+    // === HITS PANEL FOCUS (focusArea == 2) ===
     if (this.focusArea == 2) {
       // Up / Down navigate between hits ONLY (no side-to-side navigation)
       if (action == INPUT_ACTION_MENU_UP.get()) {
@@ -650,10 +724,11 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         return InputPropagation.HANDLED;
       }
 
-      // Circle (O) -> Return to additions list
+      // Circle (O / Back) -> Return to additions list and whole addition demo
       if (action == INPUT_ACTION_MENU_BACK.get()) {
         this.focusArea = 1;
         playMenuSound(3);
+        this.clearAnimCache();
         this.refreshVisuals();
         return InputPropagation.HANDLED;
       }
@@ -663,45 +738,75 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         this.setHighlightedHit(AdditionButtonType.CROSS);
         return InputPropagation.HANDLED;
       }
+    }
 
-      // Square -> sets hit to SQUARE
-      if ((action == TvvlrMultimod.INPUT_ACTION_ADDITION_SQUARE.get()
-          || action == CoreMod.INPUT_ACTION_MENU_SORT.get()
-          || action == CoreMod.INPUT_ACTION_MENU_DELETE.get()) && !repeat) {
-        this.setHighlightedHit(AdditionButtonType.SQUARE);
+    // === ADDITIONS LIST FOCUS (focusArea == 1) ===
+    if (this.focusArea == 1) {
+      if (action == INPUT_ACTION_MENU_UP.get()) {
+        if (this.selectedAdditionIndex > 0) {
+          this.selectedAdditionIndex--;
+          playMenuSound(1);
+          this.clearAnimCache();
+          this.updateHitsList();
+          this.refreshVisuals();
+        }
         return InputPropagation.HANDLED;
       }
 
-      // Triangle -> sets hit to TRIANGLE
-      if ((action == TvvlrMultimod.INPUT_ACTION_ADDITION_TRIANGLE.get()
-          || action == CoreMod.INPUT_ACTION_MENU_ADVANCED.get()
-          || action == CoreMod.INPUT_ACTION_MENU_HELP.get()) && !repeat) {
-        this.setHighlightedHit(AdditionButtonType.TRIANGLE);
+      if (action == INPUT_ACTION_MENU_DOWN.get()) {
+        final CustomAdditionsStorage.CharacterCategory character = CustomAdditionsStorage.CHARACTERS.get(this.selectedCharIndex);
+        if (this.selectedAdditionIndex < character.additions.size() - 1) {
+          this.selectedAdditionIndex++;
+          playMenuSound(1);
+          this.clearAnimCache();
+          this.updateHitsList();
+          this.refreshVisuals();
+        } else {
+          // Move to Save button
+          this.focusArea = 3;
+          playMenuSound(1);
+          this.refreshVisuals();
+        }
         return InputPropagation.HANDLED;
       }
 
-      return InputPropagation.HANDLED;
+      // Confirm (Cross) on addition -> enters hits panel
+      if (action == INPUT_ACTION_MENU_CONFIRM.get() && !repeat) {
+        this.focusArea = 2;
+        this.selectedHitIndex = 0;
+        playMenuSound(2);
+        this.refreshVisuals();
+        return InputPropagation.HANDLED;
+      }
+
+      // Left / Right also cycle characters
+      if (action == INPUT_ACTION_MENU_LEFT.get() && !repeat) {
+        this.switchCharacter(-1);
+        return InputPropagation.HANDLED;
+      }
+      if (action == INPUT_ACTION_MENU_RIGHT.get() && !repeat) {
+        this.switchCharacter(1);
+        return InputPropagation.HANDLED;
+      }
     }
 
-    // === ADDITIONS LIST OR SAVE BUTTON FOCUS ===
-    if (action == INPUT_ACTION_MENU_UP.get()) {
-      this.handleNavigateUp();
-      return InputPropagation.HANDLED;
-    }
+    // === SAVE BUTTON FOCUS (focusArea == 3) ===
+    if (this.focusArea == 3) {
+      if (action == INPUT_ACTION_MENU_UP.get()) {
+        final CustomAdditionsStorage.CharacterCategory character = CustomAdditionsStorage.CHARACTERS.get(this.selectedCharIndex);
+        this.focusArea = 1;
+        this.selectedAdditionIndex = Math.max(0, character.additions.size() - 1);
+        playMenuSound(1);
+        this.clearAnimCache();
+        this.updateHitsList();
+        this.refreshVisuals();
+        return InputPropagation.HANDLED;
+      }
 
-    if (action == INPUT_ACTION_MENU_DOWN.get()) {
-      this.handleNavigateDown();
-      return InputPropagation.HANDLED;
-    }
-
-    if (action == INPUT_ACTION_MENU_CONFIRM.get() && !repeat) {
-      this.handleConfirm();
-      return InputPropagation.HANDLED;
-    }
-
-    if (action == INPUT_ACTION_MENU_BACK.get()) {
-      this.back();
-      return InputPropagation.HANDLED;
+      if (action == INPUT_ACTION_MENU_CONFIRM.get() && !repeat) {
+        this.save();
+        return InputPropagation.HANDLED;
+      }
     }
 
     return super.inputActionPressed(action, repeat);
@@ -709,16 +814,17 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   @Override
   protected InputPropagation buttonPress(final InputButton button, final boolean repeat) {
-    if (button == InputButton.LEFT_BUMPER) {
+    // Physical bumpers
+    if (button == InputButton.LEFT_BUMPER && !repeat) {
       this.switchCharacter(-1);
       return InputPropagation.HANDLED;
     }
-
-    if (button == InputButton.RIGHT_BUMPER) {
+    if (button == InputButton.RIGHT_BUMPER && !repeat) {
       this.switchCharacter(1);
       return InputPropagation.HANDLED;
     }
 
+    // Direct mapping in hits panel
     if (this.focusArea == 2 && !repeat) {
       if (button == InputButton.A) { // Cross
         this.setHighlightedHit(AdditionButtonType.CROSS);
@@ -732,9 +838,10 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         this.setHighlightedHit(AdditionButtonType.TRIANGLE);
         return InputPropagation.HANDLED;
       }
-      if (button == InputButton.B) { // Circle (O) -> back to additions
+      if (button == InputButton.B) { // Circle (O) -> back
         this.focusArea = 1;
         playMenuSound(3);
+        this.clearAnimCache();
         this.refreshVisuals();
         return InputPropagation.HANDLED;
       }
@@ -745,85 +852,39 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   @Override
   protected InputPropagation keyPress(final InputKey key, final InputKey scancode, final Set<InputMod> mods, final boolean repeat) {
-    if (key == InputKey.PAGE_UP || key == InputKey.Q) {
+    // Q / E for bumper cycling on keyboard
+    if (key == InputKey.Q && !repeat) {
       this.switchCharacter(-1);
       return InputPropagation.HANDLED;
     }
-
-    if (key == InputKey.PAGE_DOWN || key == InputKey.E) {
+    if (key == InputKey.E && !repeat) {
       this.switchCharacter(1);
       return InputPropagation.HANDLED;
     }
 
     if (this.focusArea == 2 && !repeat) {
-      if (key == InputKey.X || key == InputKey.RETURN || key == InputKey.SPACE) {
+      // Keyboard 1 = Cross, 2 = Square, 3 = Triangle
+      if (key == InputKey.NUM_1 || key == InputKey.KP_1) {
         this.setHighlightedHit(AdditionButtonType.CROSS);
         return InputPropagation.HANDLED;
       }
-      if (key == InputKey.S || key == InputKey.A) {
+      if (key == InputKey.NUM_2 || key == InputKey.KP_2 || key == InputKey.S) {
         this.setHighlightedHit(AdditionButtonType.SQUARE);
         return InputPropagation.HANDLED;
       }
-      if (key == InputKey.T || key == InputKey.W || key == InputKey.Y) {
+      if (key == InputKey.NUM_3 || key == InputKey.KP_3 || key == InputKey.T) {
         this.setHighlightedHit(AdditionButtonType.TRIANGLE);
         return InputPropagation.HANDLED;
       }
-      if (key == InputKey.ESCAPE || key == InputKey.O || key == InputKey.BACKSPACE) {
+      if (key == InputKey.ESCAPE || key == InputKey.BACKSPACE) {
         this.focusArea = 1;
         playMenuSound(3);
+        this.clearAnimCache();
         this.refreshVisuals();
         return InputPropagation.HANDLED;
       }
     }
 
     return super.keyPress(key, scancode, mods, repeat);
-  }
-
-  private void handleNavigateUp() {
-    if (this.focusArea == 1) { // Additions list
-      if (this.selectedAdditionIndex > 0) {
-        this.selectedAdditionIndex--;
-        playMenuSound(1);
-        this.updateHitsList();
-        this.refreshVisuals();
-      }
-    } else if (this.focusArea == 3) { // From Save button
-      final CustomAdditionsStorage.CharacterCategory character = CustomAdditionsStorage.CHARACTERS.get(this.selectedCharIndex);
-      this.focusArea = 1;
-      this.selectedAdditionIndex = Math.max(0, character.additions.size() - 1);
-      playMenuSound(1);
-      this.updateHitsList();
-      this.refreshVisuals();
-    }
-  }
-
-  private void handleNavigateDown() {
-    final CustomAdditionsStorage.CharacterCategory character = CustomAdditionsStorage.CHARACTERS.get(this.selectedCharIndex);
-
-    if (this.focusArea == 1) { // Additions list
-      if (this.selectedAdditionIndex < character.additions.size() - 1) {
-        this.selectedAdditionIndex++;
-        playMenuSound(1);
-        this.updateHitsList();
-        this.refreshVisuals();
-      } else {
-        // Move to Save button
-        this.focusArea = 3;
-        playMenuSound(1);
-        this.refreshVisuals();
-      }
-    }
-  }
-
-  private void handleConfirm() {
-    if (this.focusArea == 1) {
-      // Cross on an addition opens its hits menu
-      this.focusArea = 2;
-      this.selectedHitIndex = 0;
-      playMenuSound(2);
-      this.refreshVisuals();
-    } else if (this.focusArea == 3) {
-      this.save();
-    }
   }
 }
