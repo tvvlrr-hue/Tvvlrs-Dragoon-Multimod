@@ -1,0 +1,1614 @@
+package legend.multimod;
+
+import legend.core.MathHelper;
+import legend.core.gte.MV;
+import legend.game.EngineStates;
+import legend.game.Text;
+import legend.game.scripting.ScriptState;
+import legend.game.modding.coremod.CoreMod;
+import legend.game.submap.CollisionGeometry;
+import legend.game.submap.IndicatorMode;
+import legend.game.submap.RetailSubmap;
+import legend.game.submap.SMap;
+import legend.game.submap.SubmapObject;
+import legend.game.submap.SubmapObject210;
+import legend.game.submap.TriangleIndicator140;
+import legend.game.types.BackgroundType;
+import legend.game.types.LodString;
+import legend.game.types.Model124;
+import legend.game.types.Textbox4c;
+import legend.game.types.TextboxChar08;
+import legend.game.types.TextboxState;
+import legend.game.types.TextboxText84;
+import legend.game.types.TextboxTextState;
+import legend.game.types.TextboxType;
+import legend.game.Scus94491BpeSegment_8005;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.joml.Vector3f;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.List;
+
+import legend.game.submap.SubmapMusic08;
+
+import static legend.core.GameEngine.AUDIO_THREAD;
+import static legend.core.GameEngine.CONFIG;
+import static legend.core.GameEngine.GTE;
+import static legend.core.GameEngine.PLATFORM;
+import static legend.game.EngineStates.currentEngineState_8004dd04;
+import static legend.game.FullScreenEffects.startFadeEffect;
+import static legend.game.Graphics.GsGetLs;
+import static legend.game.Graphics.PushMatrix;
+import static legend.game.Graphics.PopMatrix;
+import static legend.game.Graphics.worldToScreenMatrix_800c3548;
+import static legend.game.Models.loadModelStandardAnimation;
+import static legend.game.Scus94491BpeSegment_800b.gameState_800babc8;
+import static legend.game.Scus94491BpeSegment_800b.sobjPositions_800bd818;
+import legend.game.submap.SubmapState;
+import static legend.game.Scus94491BpeSegment_8005.shouldRestoreCameraPosition_80052c40;
+import static legend.game.Scus94491BpeSegment_8005.submapCutBeforeBattle_80052c3c;
+import static legend.game.Scus94491BpeSegment_800b.playerPositionBeforeBattle_800bed30;
+import static legend.game.Scus94491BpeSegment_800b.screenOffsetBeforeBattle_800bed50;
+import static legend.game.Text.calculateAppropriateTextboxBounds;
+import static legend.game.Text.clearTextbox;
+import static legend.game.Text.clearTextboxText;
+import static legend.game.Text.textboxes_800be358;
+import static legend.game.Text.textboxText_800bdf38;
+import static legend.game.sound.Audio.loadMusicPackage;
+import static legend.game.sound.Audio.playMenuSound;
+import static legend.game.sound.Audio.stopCurrentMusicSequence;
+import static legend.lodmod.LodMod.INPUT_ACTION_SMAP_INTERACT;
+
+public class LohanRaceManager {
+  private static final Logger LOGGER = LogManager.getFormatterLogger(LohanRaceManager.class);
+
+  public enum RaceState {
+    INACTIVE,
+    START_FADING_OUT,
+    COUNTDOWN,
+    RACING,
+    LAP_TRANSITION,
+    FINISH_IDLE,
+    FINISH_FADING_OUT
+  }
+
+  public static class Waypoint {
+    public final float x, y, z;
+    public final boolean isHurdle;
+    public final boolean isFinishLine;
+
+    public Waypoint(float x, float y, float z, boolean isHurdle, boolean isFinishLine) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+      this.isHurdle = isHurdle;
+      this.isFinishLine = isFinishLine;
+    }
+
+    public Waypoint(float x, float y, float z, boolean isHurdle) {
+      this(x, y, z, isHurdle, false);
+    }
+
+    public Waypoint(float x, float y, float z) {
+      this(x, y, z, false, false);
+    }
+  }
+
+  public static class Racer {
+    public final int id;
+    public final boolean isPlayer;
+    public final int laneIndex; // 0 = left, 1 = center, 2 = right
+    public float currentSpeed;
+    public float baseSpeed;
+    public float boostTimer;
+    public float slowTimer;
+    public float pathProgress; // floating point index along waypoints
+    public float sceneEntryProgress; // progress gap persisted across scenes
+    public final Vector3f pos = new Vector3f();
+    public final Vector3f rot = new Vector3f();
+    public float groundY;
+    public boolean isJumping;
+    public boolean jumpQueued;
+    public float jumpProgress;
+    public boolean jumpSucceeded;
+    public int lastHurdleIndex = -1;
+    public int currentAnimIndex = -1;
+    public float jumpArcHeight = 22.0f;
+    public float jumpSpeed = 0.075f;
+    public float jumpStartProgress = 0.0f;
+    public float jumpEndProgress = 1.0f;
+
+    public Racer(int id, boolean isPlayer, int laneIndex, float baseSpeed) {
+      this.id = id;
+      this.isPlayer = isPlayer;
+      this.laneIndex = laneIndex;
+      this.baseSpeed = baseSpeed;
+      this.currentSpeed = baseSpeed;
+    }
+  }
+
+  // Active race state
+  private static RaceState state = RaceState.INACTIVE;
+  private static int currentCut = 151;
+  private static int currentLap = 1;
+  private static final int TOTAL_LAPS = 3;
+  private static int startFadeTicks = 0;
+  private static int countdownTicks = 0;
+  private static int finishTicks = 0;
+  private static int finishFadeTicks = 0;
+  private static int feedbackTicks = 0;
+  private static String jumpFeedbackText = "";
+  private static boolean lastInteractPressed = false;
+  private static boolean alertSoundPlayed = false;
+  private static int lastAlertHurdleIndex = -1;
+  public static final Vector3f BOOTH_FRONT_POS = new Vector3f(145.0f, -4.0f, -845.0f);
+  public static final float BOOTH_DART_ROT_Y = 5.3947f; // Facing northeast toward vendor booth
+  private static boolean isFirstPass = true;
+  private static boolean lapCountedThisPass = false;
+  private static IndicatorMode savedIndicatorMode = null;
+
+  // Minigame music override (Track 61: Arena Games)
+  private static int[] originalMusicCuts18 = null;
+  private static int[] originalMusicCuts17 = null;
+  private static boolean originalBit17 = false;
+  private static boolean musicOverrideActive = false;
+
+  private static void enableRaceMusicOverride(final boolean enable) {
+    try {
+      final Field field = RetailSubmap.class.getDeclaredField("_8004fb00");
+      field.setAccessible(true);
+      final SubmapMusic08[] array = (SubmapMusic08[]) field.get(null);
+      if (array != null && array.length > 18 && array[17] != null && array[18] != null) {
+        final SubmapMusic08 silenceEntry = array[17]; // Submap 14, silence (-1) for Cuts [149, 150, 151, 637, 638]
+        final SubmapMusic08 minigameEntry = array[18]; // Submap 14, Track 61 for Cuts [152, 634, 636, 639]
+        if (enable) {
+          if (!musicOverrideActive) {
+            originalMusicCuts18 = minigameEntry.submapCuts_04;
+            originalMusicCuts17 = silenceEntry.submapCuts_04;
+            minigameEntry.submapCuts_04 = new int[]{152, 634, 636, 639, 151, 150, 149};
+            silenceEntry.submapCuts_04 = new int[]{637, 638}; // Remove 151, 150, 149 so index 17 never silences race scenes
+            if (gameState_800babc8 != null && gameState_800babc8._1a4 != null) {
+              originalBit17 = (gameState_800babc8._1a4[0] & (1 << 17)) != 0;
+              gameState_800babc8._1a4[0] &= ~(1 << 17); // Clear bit 17 so index 17 never matches
+              gameState_800babc8._1a4[0] |= (1 << 18);  // Set bit 18 so index 18 matches
+            }
+            musicOverrideActive = true;
+            LOGGER.info("LohanRaceManager: Enabled minigame music override (Track 61) for Cuts 151, 150, 149");
+          }
+        } else {
+          if (musicOverrideActive) {
+            if (originalMusicCuts18 != null) {
+              minigameEntry.submapCuts_04 = originalMusicCuts18;
+              originalMusicCuts18 = null;
+            } else {
+              minigameEntry.submapCuts_04 = new int[]{152, 634, 636, 639};
+            }
+            if (originalMusicCuts17 != null) {
+              silenceEntry.submapCuts_04 = originalMusicCuts17;
+              originalMusicCuts17 = null;
+            } else {
+              silenceEntry.submapCuts_04 = new int[]{149, 150, 151, 637, 638};
+            }
+            if (gameState_800babc8 != null && gameState_800babc8._1a4 != null) {
+              if (originalBit17) {
+                gameState_800babc8._1a4[0] |= (1 << 17);
+              }
+              gameState_800babc8._1a4[0] &= ~(1 << 18);
+            }
+            musicOverrideActive = false;
+            LOGGER.info("LohanRaceManager: Disabled minigame music override.");
+          }
+        }
+      }
+    } catch (Throwable t) {
+      LOGGER.warn("LohanRaceManager: Could not adjust RetailSubmap music table", t);
+    }
+  }
+
+  // The 3 official racing creature sobj indices in Severed Chains:
+  // Submap object 8 (file 264) = NPC 1 (Lane 0 - Left)
+  // Submap object 9 (file 297) = Player (Lane 1 - Center)
+  // Submap object 10 (file 330) = NPC 2 (Lane 2 - Right)
+  private static final int NPC1_SOBJ = 8;
+  private static final int PLAYER_SOBJ = 9;
+  private static final int NPC2_SOBJ = 10;
+
+  // Racers
+  private static final Racer npcRacer1 = new Racer(0, false, 0, 3.40f);
+  private static final Racer playerRacer = new Racer(1, true, 1, 3.50f);
+  private static final Racer npcRacer2 = new Racer(2, false, 2, 3.45f);
+  private static final Racer[] racers = new Racer[]{npcRacer1, playerRacer, npcRacer2};
+
+  // Dart restoration
+  private static final Vector3f dartSavedPos = new Vector3f(145.0f, -4.0f, -845.0f);
+  private static final Vector3f dartSavedRot = new Vector3f(0.0f, 0.0f, 0.0f);
+
+  // Cached reflection methods and fields
+  private static Method setCameraPosMethod = null;
+  private static Method renderTriangleIndicatorsMethod = null;
+  private static Field triangleIndicatorsField = null;
+  private static Field inputPressedField = null;
+  private static Field inputRepeatField = null;
+  private static Field inputHeldField = null;
+  private static Field transitioningField = null;
+  private static Field collisionGeometryField = null;
+
+  private static CollisionGeometry getCollisionGeometry(final SMap smap) {
+    try {
+      if (collisionGeometryField == null) {
+        collisionGeometryField = SMap.class.getDeclaredField("collisionGeometry_800cbe08");
+        collisionGeometryField.setAccessible(true);
+      }
+      return (CollisionGeometry) collisionGeometryField.get(smap);
+    } catch (Throwable t) {
+      return null;
+    }
+  }
+
+  // =========================================================================
+  // TRACK WAYPOINTS FROM DRGN21.BIN COLLISION VERTEX DATA
+  // Track flows: Cut 151 (top-right) -> Cut 149 (bottom) -> Cut 150 (top-left) -> Cut 151
+  // =========================================================================
+
+  // =========================================================================
+  // TRACK WAYPOINTS FROM DRGN21.BIN COLLISION VERTEX DATA
+  // Track flows:
+  // Scene 1: Cut 151 (Initial start mid-track, after logs -> run to exit, NO hurdles)
+  // Scene 2: Cut 150 (Bottom scene: right -> water jump -> left exit)
+  // Scene 3: Cut 149 (Doorway scene: left -> doorway gap jump -> log stacks jump -> right exit)
+  // Scene 4: Cut 151 (Full track: top-left -> log 1 jump -> log 2 jump -> lap count at start line -> exit)
+  // =========================================================================
+
+  // Scene 1: Cut 151 (Initial Start) - Starts directly at the GREEN LINE banner.
+  // Racers line up side-by-side at the green line banner and sprint down the ramp into Cut 150. NO hurdles.
+  private static final Waypoint[][] CUT_151_START_LANES = new Waypoint[][]{
+    // Lane 0 (NPC 1 - Inner Lane)
+    new Waypoint[]{
+      new Waypoint( 383.3f,  -79.3f,  -740.0f),  // Green Line Banner
+      new Waypoint( 324.0f,  -61.0f,  -885.3f),  // Ramp lower mid
+      new Waypoint( 252.8f,  -35.0f, -1000.3f),  // Ramp lower
+      new Waypoint( 193.0f,  -38.5f, -1080.8f),  // Ramp foot
+      new Waypoint( 163.0f,  -40.0f, -1120.0f)   // Exit bottom into Cut 150
+    },
+    // Lane 1 (Player - Center Lane)
+    new Waypoint[]{
+      new Waypoint( 425.5f,  -84.6f,  -751.6f),  // Green Line Banner
+      new Waypoint( 366.0f,  -66.9f,  -904.5f),  // Ramp lower mid
+      new Waypoint( 292.0f,  -42.0f, -1024.5f),  // Ramp lower
+      new Waypoint( 232.5f,  -46.0f, -1105.3f),  // Ramp foot
+      new Waypoint( 202.0f,  -48.0f, -1145.0f)   // Exit bottom into Cut 150
+    },
+    // Lane 2 (NPC 2 - Outer Lane)
+    new Waypoint[]{
+      new Waypoint( 469.8f,  -90.0f,  -763.8f),  // Green Line Banner
+      new Waypoint( 408.0f,  -72.3f,  -923.5f),  // Ramp lower mid
+      new Waypoint( 331.0f,  -49.0f, -1048.8f),  // Ramp lower
+      new Waypoint( 273.0f,  -53.5f, -1130.5f),  // Ramp foot
+      new Waypoint( 244.0f,  -55.0f, -1170.0f)   // Exit bottom into Cut 150
+    }
+  };
+
+  // Scene 2: Cut 150 (Bottom Scene: Water Jump) - Enters right platform, leaps water to wooden bridge, runs over elevated arched bridge past table to left exit.
+  // Takeoff at index 1 (Platform deck edge before water) -> leaps across water to landing at index 2 (bridge ramp foot).
+  private static final Waypoint[][] CUT_150_LANES = new Waypoint[][]{
+    // Lane 0 (NPC 1 - Inner Lane)
+    new Waypoint[]{
+      new Waypoint( 388.6f,  -61.5f, -349.4f),        // Station 0: Platform enter
+      new Waypoint( 286.7f,  -46.8f, -378.3f, true),  // Station 1: Platform takeoff before water (Green Takeoff)
+      new Waypoint(  46.4f, -112.6f, -342.9f),        // Station 2: Bridge ramp foot landing across water (Green Landing)
+      new Waypoint(   8.4f, -136.0f, -324.5f),        // Station 3: Bridge ramp lower ascending
+      new Waypoint( -30.2f, -157.1f, -313.6f),        // Station 4: Bridge ramp mid
+      new Waypoint( -65.6f, -163.0f, -296.7f),        // Station 5: Bridge ramp upper approach
+      new Waypoint(-100.6f, -151.0f, -279.7f),        // Station 6: Approach to bridge crest
+      new Waypoint(-132.0f, -141.1f, -264.9f),        // Station 7: Bridge crest
+      new Waypoint(-161.2f, -138.0f, -251.4f),        // Station 8: Bridge crest descent start
+      new Waypoint(-185.9f, -126.0f, -235.6f),        // Station 9: Bridge arch mid descent
+      new Waypoint(-212.7f, -106.0f, -224.7f),        // Station 10: Bridge lower descent
+      new Waypoint(-246.4f,  -94.0f, -222.9f),        // Station 11: Bridge ramp lower
+      new Waypoint(-282.4f,  -88.0f, -215.7f),        // Station 12: Bottom of bridge ramp
+      new Waypoint(-325.7f,  -65.0f, -177.4f),        // Station 13: Transition from ramp onto deck
+      new Waypoint(-370.8f,  -52.1f, -131.6f),        // Station 14: Deck past table
+      new Waypoint(-522.4f,  -68.0f,  -15.0f)         // Station 15: Exit left into Cut 149
+    },
+    // Lane 1 (Player - Center Lane)
+    new Waypoint[]{
+      new Waypoint( 380.2f,  -61.5f, -317.5f),        // Station 0: Platform enter
+      new Waypoint( 286.1f,  -46.8f, -342.3f, true),  // Station 1: Platform takeoff before water (Green Takeoff)
+      new Waypoint(  48.6f, -112.6f, -323.0f),        // Station 2: Bridge ramp foot landing across water (Green Landing)
+      new Waypoint(  12.0f, -136.0f, -312.0f),        // Station 3: Bridge ramp lower ascending
+      new Waypoint( -25.6f, -157.1f, -301.4f),        // Station 4: Bridge ramp mid
+      new Waypoint( -60.0f, -163.0f, -285.0f),        // Station 5: Bridge ramp upper approach
+      new Waypoint( -95.0f, -151.0f, -268.0f),        // Station 6: Approach to bridge crest
+      new Waypoint(-126.5f, -141.1f, -253.1f),        // Station 7: Bridge crest
+      new Waypoint(-155.0f, -138.0f, -240.0f),        // Station 8: Bridge crest descent start
+      new Waypoint(-180.0f, -126.0f, -224.0f),        // Station 9: Bridge arch mid descent
+      new Waypoint(-210.0f, -106.0f, -212.0f),        // Station 10: Bridge lower descent
+      new Waypoint(-245.0f,  -94.0f, -210.0f),        // Station 11: Bridge ramp lower
+      new Waypoint(-275.0f,  -88.0f, -205.0f),        // Station 12: Bottom of bridge ramp
+      new Waypoint(-310.0f,  -65.0f, -165.0f),        // Station 13: Transition from ramp onto deck
+      new Waypoint(-350.8f,  -52.1f, -109.3f),        // Station 14: Deck past table
+      new Waypoint(-504.1f,  -68.0f,    8.8f)         // Station 15: Exit left into Cut 149
+    },
+    // Lane 2 (NPC 2 - Outer Lane)
+    new Waypoint[]{
+      new Waypoint( 371.8f,  -61.5f, -285.6f),        // Station 0: Platform enter
+      new Waypoint( 285.5f,  -46.8f, -306.3f, true),  // Station 1: Platform takeoff before water (Green Takeoff)
+      new Waypoint(  50.8f, -112.6f, -303.1f),        // Station 2: Bridge ramp foot landing across water (Green Landing)
+      new Waypoint(  15.6f, -136.0f, -299.5f),        // Station 3: Bridge ramp lower ascending
+      new Waypoint( -21.0f, -157.1f, -289.2f),        // Station 4: Bridge ramp mid
+      new Waypoint( -54.4f, -163.0f, -273.3f),        // Station 5: Bridge ramp upper approach
+      new Waypoint( -89.4f, -151.0f, -256.3f),        // Station 6: Approach to bridge crest
+      new Waypoint(-121.0f, -141.1f, -241.3f),        // Station 7: Bridge crest
+      new Waypoint(-148.8f, -138.0f, -228.6f),        // Station 8: Bridge crest descent start
+      new Waypoint(-174.1f, -126.0f, -212.4f),        // Station 9: Bridge arch mid descent
+      new Waypoint(-207.3f, -106.0f, -199.3f),        // Station 10: Bridge lower descent
+      new Waypoint(-243.6f,  -94.0f, -197.1f),        // Station 11: Bridge ramp lower
+      new Waypoint(-267.6f,  -88.0f, -194.3f),        // Station 12: Bottom of bridge ramp
+      new Waypoint(-294.3f,  -65.0f, -152.6f),        // Station 13: Transition from ramp onto deck
+      new Waypoint(-330.8f,  -52.1f,  -87.0f),        // Station 14: Deck past table
+      new Waypoint(-485.8f,  -68.0f,   32.6f)         // Station 15: Exit left into Cut 149
+    }
+  };
+
+  // Scene 3: Cut 149 (Top Scene: Ticket Vendor Girl) - Left ramp -> booth roof platform -> doorway gap jump -> middle booth platform -> run across middle booth roof -> downward ramp -> barrier jump -> exit into Cut 151.
+  // Hurdle 1 at index 2 (Left roof platform) -> leaps across doorway opening to landing at index 3 (middle booth platform).
+  // Station 4 & 5 at index 4 & 5 (Middle booth roof peak & right edge) -> runs down onto downward ramp.
+  // Hurdle 2 at index 6 (Downward ramp before barrier) -> leaps over wooden barrier to landing at index 7 (downward ramp past barrier).
+  private static final Waypoint[][] CUT_149_LANES = new Waypoint[][]{
+    // Lane 0 (NPC 1 - Inner Lane)
+    new Waypoint[]{
+      new Waypoint(-458.3f, -100.0f, -349.8f),        // Station 0: Left entrance
+      new Waypoint(-315.5f, -180.0f, -202.3f),        // Station 1: Left ramp ascending
+      new Waypoint(-237.8f, -218.0f, -133.5f, true),  // Station 2: Left roof takeoff (Doorway gap takeoff)
+      new Waypoint( -72.5f, -212.5f,  -57.8f),        // Station 3: Middle booth platform (Doorway gap landing)
+      new Waypoint( 130.5f, -201.0f,   34.0f),        // Station 4: Middle booth roof peak (Traverse peak)
+      new Waypoint( 165.0f, -195.0f,   37.0f),        // Station 5: Middle booth roof right (Traverse right)
+      new Waypoint( 311.0f, -121.3f,   40.5f, true),  // Station 6: Upper ramp before barrier (Barrier takeoff)
+      new Waypoint( 438.0f,  -64.5f,   31.5f),        // Station 7: Ramp past barrier (Barrier landing)
+      new Waypoint( 632.8f,  -26.8f,   19.0f)         // Station 8: Exit right into Cut 151
+    },
+    // Lane 1 (Player - Center Lane)
+    new Waypoint[]{
+      new Waypoint(-489.9f, -100.0f, -317.9f),        // Station 0: Left entrance
+      new Waypoint(-341.0f, -180.0f, -175.0f),        // Station 1: Left ramp ascending
+      new Waypoint(-262.4f, -218.0f, -100.6f, true),  // Station 2: Left roof takeoff (Doorway gap takeoff)
+      new Waypoint( -89.0f, -212.5f,  -20.3f),        // Station 3: Middle booth platform (Doorway gap landing)
+      new Waypoint( 119.9f, -206.5f,   72.1f),        // Station 4: Middle booth roof peak (Traverse peak)
+      new Waypoint( 165.0f, -195.0f,   73.5f),        // Station 5: Middle booth roof right (Traverse right)
+      new Waypoint( 308.4f, -123.4f,   79.1f, true),  // Station 6: Upper ramp before barrier (Barrier takeoff)
+      new Waypoint( 438.8f,  -66.0f,   72.9f),        // Station 7: Ramp past barrier (Barrier landing)
+      new Waypoint( 635.0f,  -33.4f,   53.6f)         // Station 8: Exit right into Cut 151
+    },
+    // Lane 2 (NPC 2 - Outer Lane)
+    new Waypoint[]{
+      new Waypoint(-518.0f, -100.0f, -289.3f),        // Station 0: Left entrance
+      new Waypoint(-364.8f, -180.0f, -149.5f),        // Station 1: Left ramp ascending
+      new Waypoint(-287.5f, -218.0f,  -67.3f, true),  // Station 2: Left roof takeoff (Doorway gap takeoff)
+      new Waypoint(-104.8f, -212.5f,   15.0f),        // Station 3: Middle booth platform (Doorway gap landing)
+      new Waypoint( 109.0f, -212.3f,  109.5f),        // Station 4: Middle booth roof peak (Traverse peak)
+      new Waypoint( 165.0f, -195.0f,  112.0f),        // Station 5: Middle booth roof right (Traverse right)
+      new Waypoint( 305.5f, -125.5f,  116.3f, true),  // Station 6: Upper ramp before barrier (Barrier takeoff)
+      new Waypoint( 439.8f,  -67.8f,  118.0f),        // Station 7: Ramp past barrier (Barrier landing)
+      new Waypoint( 637.3f,  -39.8f,   87.0f)         // Station 8: Exit right into Cut 151
+    }
+  };
+
+  // Scene 4: Cut 151 (Full Track for subsequent laps) - Starts on catwalk in plain view approaching Hurdle 1.
+  // Hurdle 1 at index 1 (Log 1 takeoff).
+  // Hurdle 2 at index 3 (Log 2 takeoff).
+  // Curves smoothly along circular catwalk, enters ramp, crosses Green Line banner (Finish Line) to count lap, and exits into Cut 150.
+  private static final Waypoint[][] CUT_151_FULL_LANES = new Waypoint[][]{
+    // Lane 0 (NPC 1 - Inner Lane)
+    new Waypoint[]{
+      new Waypoint(-696.3f,   22.3f, 1271.3f),        // Station 0: Catwalk approach (entrance)
+      new Waypoint(-501.0f,   25.5f, 1230.0f, true),  // Station 1: Log 1 takeoff (Green 1)
+      new Waypoint(-245.3f,   20.5f, 1144.5f),        // Station 2: Log 1 landing
+      new Waypoint(  -5.0f,  -22.0f, 1000.0f, true),  // Station 3: Log 2 takeoff (Green 2)
+      new Waypoint( 105.5f,  -65.0f,  899.5f),        // Station 4: Log 2 landing
+      new Waypoint( 195.0f, -151.8f,  544.8f),        // Station 5: Catwalk descending
+      new Waypoint( 302.8f, -183.5f,  382.5f),        // Station 6: Catwalk curve 1
+      new Waypoint( 370.3f, -203.5f,  215.3f),        // Station 7: Catwalk curve 2
+      new Waypoint( 421.8f, -204.3f,   37.0f),        // Station 8: Catwalk curve 3
+      new Waypoint( 455.5f, -163.0f, -201.3f),        // Station 9: Upper ramp 1
+      new Waypoint( 454.0f, -133.0f, -372.3f),        // Station 10: Upper ramp 2
+      new Waypoint( 428.3f, -101.0f, -543.5f),        // Station 11: Mid ramp
+      new Waypoint( 383.3f,  -79.3f, -740.0f, false, true), // Station 12: Green Line Banner (Lap Finish!)
+      new Waypoint( 324.0f,  -61.0f, -885.3f),        // Station 13: Ramp lower mid
+      new Waypoint( 252.8f,  -35.0f, -1000.3f),       // Station 14: Ramp lower
+      new Waypoint( 193.0f,  -38.5f, -1080.8f),       // Station 15: Ramp foot
+      new Waypoint( 163.0f,  -40.0f, -1120.0f)        // Station 16: Exit bottom into Cut 150
+    },
+    // Lane 1 (Player - Center Lane)
+    new Waypoint[]{
+      new Waypoint(-687.5f,   21.0f, 1308.0f),        // Station 0: Catwalk approach (entrance)
+      new Waypoint(-491.8f,   24.0f, 1270.0f, true),  // Station 1: Log 1 takeoff (Green 1)
+      new Waypoint(-221.1f,   19.1f, 1188.6f),        // Station 2: Log 1 landing
+      new Waypoint(  10.0f,  -27.0f, 1035.0f, true),  // Station 3: Log 2 takeoff (Green 2)
+      new Waypoint( 136.9f,  -70.3f,  934.0f),        // Station 4: Log 2 landing
+      new Waypoint( 230.0f, -158.4f,  572.5f),        // Station 5: Catwalk descending
+      new Waypoint( 342.6f, -190.3f,  403.5f),        // Station 6: Catwalk curve 1
+      new Waypoint( 410.0f, -213.4f,  233.8f),        // Station 7: Catwalk curve 2
+      new Waypoint( 465.3f, -210.0f,   44.5f),        // Station 8: Catwalk curve 3
+      new Waypoint( 497.1f, -170.6f, -198.9f),        // Station 9: Upper ramp 1
+      new Waypoint( 497.4f, -140.3f, -374.9f),        // Station 10: Upper ramp 2
+      new Waypoint( 475.9f, -110.0f, -550.3f),        // Station 11: Mid ramp
+      new Waypoint( 425.5f,  -84.6f, -751.6f, false, true), // Station 12: Green Line Banner (Lap Finish!)
+      new Waypoint( 366.0f,  -66.9f, -904.5f),        // Station 13: Ramp lower mid
+      new Waypoint( 292.0f,  -42.0f, -1024.5f),       // Station 14: Ramp lower
+      new Waypoint( 232.5f,  -46.0f, -1105.3f),       // Station 15: Ramp foot
+      new Waypoint( 202.0f,  -48.0f, -1145.0f)        // Station 16: Exit bottom into Cut 150
+    },
+    // Lane 2 (NPC 2 - Outer Lane)
+    new Waypoint[]{
+      new Waypoint(-678.8f,   19.5f, 1344.8f),        // Station 0: Catwalk approach (entrance)
+      new Waypoint(-482.3f,   22.5f, 1309.0f, true),  // Station 1: Log 1 takeoff (Green 1)
+      new Waypoint(-197.0f,   18.0f, 1233.0f),        // Station 2: Log 1 landing
+      new Waypoint(  25.0f,  -30.0f, 1070.0f, true),  // Station 3: Log 2 takeoff (Green 2)
+      new Waypoint( 165.8f,  -74.8f,  966.3f),        // Station 4: Log 2 landing
+      new Waypoint( 263.5f, -164.8f,  598.8f),        // Station 5: Catwalk descending
+      new Waypoint( 384.5f, -197.0f,  425.5f),        // Station 6: Catwalk curve 1
+      new Waypoint( 448.8f, -223.0f,  251.5f),        // Station 7: Catwalk curve 2
+      new Waypoint( 509.8f, -216.0f,   52.0f),        // Station 8: Catwalk curve 3
+      new Waypoint( 540.5f, -178.8f, -196.0f),        // Station 9: Upper ramp 1
+      new Waypoint( 542.0f, -147.5f, -377.3f),        // Station 10: Upper ramp 2
+      new Waypoint( 523.3f, -119.0f, -557.0f),        // Station 11: Mid ramp
+      new Waypoint( 469.8f,  -90.0f, -763.8f, false, true), // Station 12: Green Line Banner (Lap Finish!)
+      new Waypoint( 408.0f,  -72.3f, -923.5f),        // Station 13: Ramp lower mid
+      new Waypoint( 331.0f,  -49.0f, -1048.8f),       // Station 14: Ramp lower
+      new Waypoint( 273.0f,  -53.5f, -1130.5f),       // Station 15: Ramp foot
+      new Waypoint( 244.0f,  -55.0f, -1170.0f)        // Station 16: Exit bottom into Cut 150
+    }
+  };
+
+  public static boolean isRaceActive() {
+    return state != RaceState.INACTIVE;
+  }
+
+  public static void startRace(final SMap smap) {
+    LOGGER.info("LohanRaceManager: Starting Lohan Arena Race with fade-in!");
+    state = RaceState.START_FADING_OUT;
+    startFadeTicks = 16;
+    currentCut = 151;
+    currentLap = 1;
+    isFirstPass = true;
+    lapCountedThisPass = false;
+    finishTicks = 0;
+    finishFadeTicks = 0;
+    feedbackTicks = 0;
+    lastInteractPressed = false;
+    alertSoundPlayed = false;
+
+    // Save indicator mode and turn OFF so Dart's arrow is never rendered by SMap
+    try {
+      savedIndicatorMode = CONFIG.getConfig(CoreMod.INDICATOR_MODE_CONFIG.get());
+      CONFIG.setConfig(CoreMod.INDICATOR_MODE_CONFIG.get(), IndicatorMode.OFF);
+    } catch (Throwable t) {
+      LOGGER.warn("Could not disable indicator mode config", t);
+    }
+
+    // Trigger fade out to black
+    startFadeEffect(1, 15);
+
+    // Enable minigame music (Track 61: Arena Games) across all Lohan race scenes
+    enableRaceMusicOverride(true);
+    try {
+      loadMusicPackage(61);
+    } catch (Throwable t) {
+      LOGGER.warn("LohanRaceManager: Could not load music package 61", t);
+    }
+
+    // Reset racers to starting grid (waypoint 0 of Cut 151 Scene 1)
+    for (final Racer r : racers) {
+      r.pathProgress = 0.0f;
+      r.sceneEntryProgress = 0.0f;
+      r.currentSpeed = r.baseSpeed;
+      r.boostTimer = 0;
+      r.slowTimer = 0;
+      r.isJumping = false;
+      r.jumpQueued = false;
+      r.jumpProgress = 0;
+      r.lastHurdleIndex = -1;
+      r.currentAnimIndex = -1;
+      r.jumpArcHeight = 22.0f;
+      r.jumpSpeed = 0.075f;
+    }
+    lastAlertHurdleIndex = -1;
+    alertSoundPlayed = false;
+
+    // Save Dart position, hide Dart, attach camera to Dart and lock Dart to player racer
+    if (smap.sobjs_800c6880 != null && smap.sobjs_800c6880.length > 0 && smap.sobjs_800c6880[0] != null) {
+      final SubmapObject210 dartSobj = smap.sobjs_800c6880[0].innerStruct_00;
+      dartSavedPos.set(dartSobj.model_00.coord2_14.coord.transfer);
+      dartSavedRot.set(dartSobj.model_00.coord2_14.transforms.rotate);
+
+      // Save exact pre-race submap state so SMap restores it cleanly on minigame conclusion
+      try {
+        submapCutBeforeBattle_80052c3c = 151;
+        shouldRestoreCameraPosition_80052c40 = true;
+        final Field offsetField = SMap.class.getDeclaredField("screenOffset_800cb568");
+        offsetField.setAccessible(true);
+        final Object offsetObj = offsetField.get(smap);
+        if (offsetObj instanceof org.joml.Vector2f v) {
+          screenOffsetBeforeBattle_800bed50.set(v);
+        }
+        playerPositionBeforeBattle_800bed30.set(dartSobj.model_00.coord2_14.coord);
+      } catch (Throwable t) {
+        LOGGER.warn("LohanRaceManager: Could not save pre-race submap state", t);
+      }
+
+      dartSobj.hidden_128 = true;
+      dartSobj.cameraAttached_178 = false;
+      smap.sobjs_800c6880[0].pause();
+    }
+
+    assignRacerSobjs(smap);
+    pauseNonRacerSobjs(smap);
+
+    // Populate animations for the 3 racer sobjs (8, 9, 10) so they always have the creature animation set.
+    if (smap.submap != null) {
+      final List<legend.game.types.TmdAnimationFile> creatureAnims = getCreatureAnimations(smap.submap.objects);
+      if (creatureAnims != null) {
+        for (int idx : new int[]{NPC1_SOBJ, PLAYER_SOBJ, NPC2_SOBJ}) {
+          if (idx < smap.submap.objects.size()) {
+            final SubmapObject obj = smap.submap.objects.get(idx);
+            if (obj.animations.isEmpty()) {
+              obj.animations.addAll(creatureAnims);
+            }
+          }
+        }
+      }
+    }
+
+    // Position contestants at starting line and focus camera
+    for (final Racer r : racers) {
+      final Waypoint[] laneWaypoints = getLaneWaypoints(r.laneIndex);
+      updateRacerPose(r, laneWaypoints, true);
+    }
+    syncRacersToSobjs(smap);
+    focusCamera(smap, playerRacer.pos);
+  }
+
+  private static List<legend.game.types.TmdAnimationFile> getCreatureAnimations(final List<SubmapObject> objects) {
+    if (objects == null) return null;
+    final int preferredIndex = (currentCut == 151) ? 7 : 8;
+    if (preferredIndex < objects.size() && objects.get(preferredIndex) != null) {
+      final List<legend.game.types.TmdAnimationFile> list = objects.get(preferredIndex).animations;
+      if (list != null && list.size() > 3 && list.get(3) != null) {
+        return list;
+      }
+    }
+    for (final SubmapObject obj : objects) {
+      if (obj != null && obj.animations != null && obj.animations.size() > 3 && obj.animations.get(3) != null) {
+        return obj.animations;
+      }
+    }
+    return null;
+  }
+
+  private static List<legend.game.types.TmdAnimationFile> getCreatureAnimations(final SMap smap) {
+    if (smap == null || smap.submap == null) return null;
+    return getCreatureAnimations(smap.submap.objects);
+  }
+
+  public static void onSubmapLoad(final SMap smap, final RetailSubmap retail, final List<SubmapObject> objects) {
+    if (!TvvlrMultimod.isRacingMinigameEnabled()) {
+      return;
+    }
+    // Ensure racetrack exit ramp in Cut 151 has door triggers back to Lohan town (Cut 150)
+    final CollisionGeometry col = getCollisionGeometry(smap);
+    if (retail.cut == 151 && col != null) {
+      try {
+        for (int p : new int[]{51, 52, 53, 54}) {
+          if (p >= 0 && p < 64) {
+            col.addDoor(p, 150, 0);
+          }
+        }
+        LOGGER.info("LohanRaceManager: Added racetrack ramp exit door triggers (51-54) to Cut 150");
+      } catch (Throwable t) {
+        LOGGER.warn("LohanRaceManager: Could not add ramp exit doors", t);
+      }
+    }
+
+    if (!isRaceActive()) {
+      enableRaceMusicOverride(false);
+      return;
+    }
+
+    currentCut = retail.cut;
+    LOGGER.info("LohanRaceManager: Loaded submap cut %d during race.", currentCut);
+
+    // Keep minigame music active across scene transitions
+    enableRaceMusicOverride(true);
+    try {
+      if (AUDIO_THREAD.getSongId() != 61) {
+        loadMusicPackage(61);
+      } else if (!AUDIO_THREAD.isMusicPlaying()) {
+        AUDIO_THREAD.startSequence();
+      }
+    } catch (Throwable ignored) {
+    }
+
+    if (currentCut == 150) {
+      // Fix foreground bridge cutout occluding racers in Cut 150.
+      // Background NPC depth ranges (screenZ 50-67) overlap with racer depth ranges (screenZ 57-75),
+      // making a single cutout Z that satisfies both constraints mathematically impossible.
+      // Solution: hide all background NPCs during Cut 150 (same as Cut 151), then push both
+      // cutouts to background depth (4095) so racers on the bridge never clip through planks.
+      //
+      // FG 2 (Env 8): Left bridge ramp foot cutout - background depth
+      retail.setEnvironmentOverlayDepthModeAndZ(2, 2, 4095);
+      // FG 3 (Env 9): Main bridge arch cutout - background depth (racers always in front)
+      retail.setEnvironmentOverlayDepthModeAndZ(2, 3, 4095);
+    }
+
+    assignRacerSobjs(smap);
+    pauseNonRacerSobjs(smap);
+
+    // Populate animations for the 3 racer sobjs (8, 9, 10) so they always have the creature animation set.
+    // In retail Severed Chains, symlinked sobjs only share the model; their animations list is empty.
+    final List<legend.game.types.TmdAnimationFile> creatureAnims = getCreatureAnimations(objects);
+    if (creatureAnims != null) {
+      for (int idx : new int[]{NPC1_SOBJ, PLAYER_SOBJ, NPC2_SOBJ}) {
+        if (idx < objects.size()) {
+          final SubmapObject obj = objects.get(idx);
+          if (obj.animations.isEmpty()) {
+            obj.animations.addAll(creatureAnims);
+          }
+        }
+      }
+    }
+
+    // Persist relative gap into this new cut
+    lapCountedThisPass = false;
+    for (final Racer r : racers) {
+      r.pathProgress = r.sceneEntryProgress;
+      r.lastHurdleIndex = -1;
+      r.currentAnimIndex = -1;
+      r.isJumping = false;
+      r.jumpQueued = false;
+      r.jumpProgress = 0;
+      r.jumpArcHeight = 22.0f;
+      r.jumpSpeed = 0.075f;
+      final Waypoint[] laneWaypoints = getLaneWaypoints(r.laneIndex);
+      updateRacerPose(r, laneWaypoints, true);
+    }
+    alertSoundPlayed = false;
+    lastAlertHurdleIndex = -1;
+
+    syncRacersToSobjs(smap);
+    focusCamera(smap, playerRacer.pos);
+
+    if (state == RaceState.LAP_TRANSITION) {
+      state = RaceState.RACING;
+    }
+  }
+
+  private static void assignRacerSobjs(final SMap smap) {
+    final int sobjCount = smap.sobjs_800c6880 != null ? smap.sobjs_800c6880.length : 0;
+
+    // Take complete control of the 3 creature sobjs (8, 9, 10):
+    // Pause their scripts and cancel all retail interpolations
+    for (int idx : new int[]{NPC1_SOBJ, PLAYER_SOBJ, NPC2_SOBJ}) {
+      if (idx >= 0 && idx < sobjCount && smap.sobjs_800c6880[idx] != null) {
+        final ScriptState<SubmapObject210> sstate = smap.sobjs_800c6880[idx];
+        sstate.pause();
+
+        final SubmapObject210 sobj = sstate.innerStruct_00;
+        sobj.hidden_128 = false;
+        sobj.finishInterpolatedMovement();
+        sobj.finishInterpolatedRotationX();
+        sobj.finishInterpolatedRotationY();
+        sobj.finishInterpolatedRotationZ();
+        sobj.interpMovementTicksTotal = 0;
+        sobj.interpMovementTicks = 0;
+        sobj.interpRotationTicksTotalY = 0;
+        sobj.interpRotationTicksY = 0;
+        sobj.rotationFrames_188 = 0;
+        sobj.movementType_170 = 0;
+        sobj.movementTicks_144 = 0;
+        // Disable collision so the engine's collision system doesn't snap the Y coordinate
+        // back to the ground surface during jumps (which causes a one-frame visual glitch).
+        sobj.collisionSizeHorizontal_1a0 = 0;
+        sobj.collisionSizeVertical_1a4 = 0;
+        sobj.collisionReach_1b4 = 0;
+        sobj.collidedWithSobjIndex_19c = -1;
+        sobj.collidedWithSobjIndex_1a8 = -1;
+        sobj.ignoreCollision_172 = 1; // Treat as ghost — no geometry collision
+      }
+    }
+  }
+
+  private static void pauseNonRacerSobjs(final SMap smap) {
+    if (smap.sobjs_800c6880 == null) return;
+    for (int idx = 0; idx < smap.sobjs_800c6880.length; idx++) {
+      if (idx == PLAYER_SOBJ || idx == NPC1_SOBJ || idx == NPC2_SOBJ || idx == 0) {
+        continue;
+      }
+      // In Cut 151: hide the two non-racer track creatures (sobj 7, 11+)
+      // In Cut 150: hide ALL remaining sobjs — the bridge cutout depth space overlaps with both
+      //   racers and any background NPC, so no NPC can be safely visible during Cut 150 racing.
+      //   Dart (0) and the 3 racers (8/9/10) are already excluded by the continue above.
+      final boolean hideCut151Extra = (idx == 7 || idx >= 11);
+      final boolean hideCut150Npc   = (currentCut == 150);
+      if (hideCut151Extra || hideCut150Npc) {
+        if (smap.sobjs_800c6880[idx] != null) {
+          smap.sobjs_800c6880[idx].pause();
+          final SubmapObject210 sobj = smap.sobjs_800c6880[idx].innerStruct_00;
+          sobj.hidden_128 = true;
+          sobj.disableAnimation_12a = true;
+          sobj.collisionSizeHorizontal_1a0 = 0;
+          sobj.collisionSizeVertical_1a4 = 0;
+          sobj.model_00.coord2_14.coord.transfer.set(0.0f, 5000.0f, 0.0f);
+        }
+      }
+    }
+  }
+
+
+
+  private static void resumeAllSobjs(final SMap smap) {
+    // Intentionally empty: on race finish, mapTransition(151, 0) reloads the cut freshly.
+  }
+
+  private static void suppressInteractInput(final SMap smap) {
+    try {
+      if (inputPressedField == null) {
+        inputPressedField = SMap.class.getDeclaredField("inputPressed");
+        inputPressedField.setAccessible(true);
+        inputRepeatField = SMap.class.getDeclaredField("inputRepeat");
+        inputRepeatField.setAccessible(true);
+        inputHeldField = SMap.class.getDeclaredField("inputHeld");
+        inputHeldField.setAccessible(true);
+      }
+      final int pressed = inputPressedField.getInt(smap);
+      if ((pressed & 0x20) != 0) {
+        inputPressedField.setInt(smap, pressed & ~0x20);
+      }
+      final int repeat = inputRepeatField.getInt(smap);
+      if ((repeat & 0x20) != 0) {
+        inputRepeatField.setInt(smap, repeat & ~0x20);
+      }
+      final int held = inputHeldField.getInt(smap);
+      if ((held & 0x20) != 0) {
+        inputHeldField.setInt(smap, held & ~0x20);
+      }
+    } catch (Throwable ignored) {
+    }
+  }
+
+  public static void onRender() {
+    if (!TvvlrMultimod.isRacingMinigameEnabled()) {
+      return;
+    }
+    if (!isRaceActive()) {
+      // Allow Dart to exit Cut 151 via both the main town doorway, racetrack ramp, and top archway to Arena
+      if (currentEngineState_8004dd04 instanceof final SMap smap && smap.submap instanceof final RetailSubmap retail && retail.cut == 151) {
+        if (smap.smapLoadingStage_800cb430 != SubmapState.RENDER_SUBMAP_12) {
+          return;
+        }
+        if (smap.sobjs_800c6880 != null && smap.sobjs_800c6880.length > 0 && smap.sobjs_800c6880[0] != null) {
+          final SubmapObject210 dart = smap.sobjs_800c6880[0].innerStruct_00;
+          final Vector3f dartPos = dart.model_00.coord2_14.coord.transfer;
+
+          // Always ensure collidedPrimitiveIndex_80052c38 tracks Dart's active primitive
+          if (dart.collidedPrimitiveIndex_16c >= 0) {
+            Scus94491BpeSegment_8005.collidedPrimitiveIndex_80052c38 = dart.collidedPrimitiveIndex_16c;
+          }
+
+          boolean shouldTransitionToTown = false;
+          boolean shouldTransitionToArena = false;
+
+          // 1. Main town doorway exit (Primitive 0 corridor: X < -15.0f and Z around -860)
+          if (dart.collidedPrimitiveIndex_16c == 0 ||
+              (dartPos.x < -15.0f && dartPos.z < -750.0f && dartPos.z > -980.0f)) {
+            shouldTransitionToTown = true;
+          }
+
+          // 2. Racetrack ramp exit (Primitives 51-54 heading south down to Cut 150)
+          if ((dart.collidedPrimitiveIndex_16c >= 51 && dart.collidedPrimitiveIndex_16c <= 54) ||
+              (dartPos.z < -1040.0f && dartPos.x > 120.0f)) {
+            shouldTransitionToTown = true;
+          }
+
+          // 3. Top archway exit to Arena (Cut 149, scene 18)
+          // Primitive 36 is the transition trigger. Primitive 35 corridor extends past X < -440 and Z > 600, or Z > 730.
+          if (dart.collidedPrimitiveIndex_16c == 36 ||
+              (dartPos.x < -440.0f && dartPos.z > 600.0f) ||
+              (dartPos.x < -360.0f && dartPos.z > 730.0f)) {
+            shouldTransitionToArena = true;
+          }
+
+          if (shouldTransitionToTown || shouldTransitionToArena) {
+            try {
+              if (transitioningField == null) {
+                transitioningField = SMap.class.getDeclaredField("transitioning_800f7e4c");
+                transitioningField.setAccessible(true);
+              }
+              final boolean isTransitioning = transitioningField.getBoolean(smap);
+              if (!isTransitioning) {
+                if (shouldTransitionToTown) {
+                  LOGGER.info("LohanRaceManager: Player exiting Cut 151 to Lohan town (Cut 150) at pos=(%.1f, %.1f, %.1f), prim=%d",
+                      dartPos.x, dartPos.y, dartPos.z, dart.collidedPrimitiveIndex_16c);
+                  smap.mapTransition(150, 0);
+                } else {
+                  LOGGER.info("LohanRaceManager: Player exiting Cut 151 to Lohan arena (Cut 149) at pos=(%.1f, %.1f, %.1f), prim=%d",
+                      dartPos.x, dartPos.y, dartPos.z, dart.collidedPrimitiveIndex_16c);
+                  smap.mapTransition(149, 18);
+                }
+              }
+            } catch (Throwable t) {
+              LOGGER.warn("Could not check transitioning via reflection", t);
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    if (currentCut == 150 && currentEngineState_8004dd04 instanceof final SMap smap && smap.submap instanceof final RetailSubmap retail) {
+      retail.setEnvironmentOverlayDepthModeAndZ(2, 2, 4095);
+      retail.setEnvironmentOverlayDepthModeAndZ(2, 3, 4095);
+      // Enforce per-frame: NPC scripts can resume themselves after cut-load, re-showing characters.
+      // Dart (0) and the 3 racers are the only sobjs that should be visible in Cut 150.
+      if (smap.sobjs_800c6880 != null) {
+        for (int idx = 0; idx < smap.sobjs_800c6880.length; idx++) {
+          if (idx == 0 || idx == PLAYER_SOBJ || idx == NPC1_SOBJ || idx == NPC2_SOBJ) continue;
+          if (smap.sobjs_800c6880[idx] != null) {
+            final SubmapObject210 s = smap.sobjs_800c6880[idx].innerStruct_00;
+            s.hidden_128 = true;
+            s.model_00.coord2_14.coord.transfer.set(0.0f, 5000.0f, 0.0f);
+          }
+        }
+      }
+    }
+
+    try {
+      if (state == RaceState.START_FADING_OUT) {
+        updateStartFade();
+      } else if (state == RaceState.COUNTDOWN) {
+        updateCountdown();
+      } else if (state == RaceState.RACING) {
+        try {
+          if (AUDIO_THREAD.getSongId() != 61) {
+            loadMusicPackage(61);
+          } else if (!AUDIO_THREAD.isMusicPlaying()) {
+            AUDIO_THREAD.startSequence();
+          }
+        } catch (Throwable ignored) {
+        }
+        updateRace();
+      } else if (state == RaceState.FINISH_IDLE || state == RaceState.FINISH_FADING_OUT) {
+        updateFinished();
+      }
+
+      // Render HUD and Arrow
+      renderRaceHUD();
+      renderPlayerArrow();
+    } catch (Throwable t) {
+      LOGGER.error("LohanRaceManager onRender error", t);
+    }
+  }
+
+  private static void updateStartFade() {
+    startFadeTicks--;
+
+    if (currentEngineState_8004dd04 instanceof final SMap smap) {
+      for (final Racer r : racers) {
+        final Waypoint[] laneWaypoints = getLaneWaypoints(r.laneIndex);
+        updateRacerPose(r, laneWaypoints, true);
+      }
+      syncRacersToSobjs(smap);
+      focusCamera(smap, playerRacer.pos);
+    }
+
+    if (startFadeTicks <= 0) {
+      // Screen is fully black: fade in on the lined up racers!
+      startFadeEffect(2, 15);
+      state = RaceState.COUNTDOWN;
+      countdownTicks = 120; // 4 seconds (3, 2, 1, GO!)
+      LOGGER.info("LohanRaceManager: Faded in on starting grid. Beginning countdown.");
+    }
+  }
+
+  private static void updateCountdown() {
+    countdownTicks--;
+
+    // Audio chimes for countdown
+    if (countdownTicks == 90 || countdownTicks == 60 || countdownTicks == 30) {
+      playMenuSound(0); // Subtle tick chime
+    } else if (countdownTicks == 0) {
+      playMenuSound(1); // GO chime!
+      state = RaceState.RACING;
+      LOGGER.info("LohanRaceManager: GO! Race started.");
+    }
+
+    // Keep all contestants lined up at the starting line and camera locked on
+    if (currentEngineState_8004dd04 instanceof final SMap smap) {
+      for (final Racer r : racers) {
+        final Waypoint[] laneWaypoints = getLaneWaypoints(r.laneIndex);
+        updateRacerPose(r, laneWaypoints, true);
+      }
+      syncRacersToSobjs(smap);
+      focusCamera(smap, playerRacer.pos);
+    }
+  }
+
+  private static void updateRace() {
+    if (!(currentEngineState_8004dd04 instanceof final SMap smap)) return;
+
+    final Waypoint[] playerWaypoints = getLaneWaypoints(playerRacer.laneIndex);
+    if (playerWaypoints.length < 2) return;
+
+    // Check player input for jumping (edge-triggered)
+    final boolean interactPressed = PLATFORM.isActionPressed(INPUT_ACTION_SMAP_INTERACT.get());
+    final boolean actionJustPressed = interactPressed && !lastInteractPressed;
+    lastInteractPressed = interactPressed;
+
+    // Suppress interact input so SMap and background NPCs don't receive it and trigger dialogue!
+    suppressInteractInput(smap);
+
+    // Update each racer
+    for (final Racer r : racers) {
+      final Waypoint[] waypoints = getLaneWaypoints(r.laneIndex);
+
+      // Speed adjustments (boost / slow)
+      if (r.boostTimer > 0) {
+        r.boostTimer--;
+        r.currentSpeed = r.baseSpeed * 1.40f;
+      } else if (r.slowTimer > 0) {
+        r.slowTimer--;
+        r.currentSpeed = r.baseSpeed * 0.50f;
+      } else {
+        r.currentSpeed = r.baseSpeed;
+      }
+
+      // Hurdle detection based on actual 3D Euclidean distance in world units
+      final int upcomingHurdle = findUpcomingHurdle(r, waypoints);
+      if (r.isPlayer && upcomingHurdle != -1) {
+        if (upcomingHurdle != lastAlertHurdleIndex) {
+          lastAlertHurdleIndex = upcomingHurdle;
+          alertSoundPlayed = false;
+        }
+
+        final Waypoint hw = waypoints[upcomingHurdle];
+        final float dist3d = r.pos.distance(hw.x, hw.y, hw.z);
+        final float progressDist = (float) upcomingHurdle - r.pathProgress;
+
+        // In approach zone when approaching obstacle and within 95 world units
+        final boolean inApproachZone = progressDist > -0.05f && dist3d < 95.0f && r.lastHurdleIndex != upcomingHurdle;
+
+        // Show/hide the ! alert indicator
+        setAlertIndicator(smap, PLAYER_SOBJ, inApproachZone && !r.jumpQueued && !r.isJumping);
+
+        // Play the standard LoD prompt "boing" when ! first appears
+        if (inApproachZone && !alertSoundPlayed && !r.jumpQueued && !r.isJumping) {
+          playMenuSound(4); // Standard LoD interaction prompt sound
+          alertSoundPlayed = true;
+        }
+
+        // Player jump attempt: anytime alert is active (or right up to takeoff), pressing interact registers a successful jump!
+        if (actionJustPressed && r.lastHurdleIndex != upcomingHurdle && !r.isJumping && !r.jumpQueued &&
+            (inApproachZone || (progressDist > -0.15f && dist3d < 100.0f))) {
+          r.jumpQueued = true;
+          r.jumpSucceeded = true;
+          r.boostTimer = 45;
+          r.slowTimer = 0;
+          playMenuSound(2); // Standard LoD confirm/accept sound
+          jumpFeedbackText = "PERFECT JUMP!";
+          feedbackTicks = 40;
+          setAlertIndicator(smap, PLAYER_SOBJ, false);
+
+          if (r.pathProgress >= upcomingHurdle) {
+            launchJump(r, upcomingHurdle, true);
+          }
+        }
+      } else if (!r.isPlayer && upcomingHurdle != -1 && !r.isJumping && !r.jumpQueued && r.lastHurdleIndex != upcomingHurdle) {
+        // NPC hurdle jumping logic
+        final Waypoint hw = waypoints[upcomingHurdle];
+        final float dist3d = r.pos.distance(hw.x, hw.y, hw.z);
+        final float progressDist = (float) upcomingHurdle - r.pathProgress;
+        if (progressDist > -0.05f && dist3d < 55.0f) {
+          final boolean success = Math.random() < (r.id == 0 ? 0.82 : 0.76);
+          if (success) {
+            r.jumpQueued = true;
+            r.jumpSucceeded = true;
+            r.boostTimer = 45;
+            r.slowTimer = 0;
+            if (r.pathProgress >= upcomingHurdle) {
+              launchJump(r, upcomingHurdle, true);
+            }
+          } else {
+            r.lastHurdleIndex = upcomingHurdle;
+            handleMissedHurdle(r, upcomingHurdle);
+          }
+        }
+      }
+
+      // Distance step along waypoints
+      final int curWp = Math.max(0, Math.min(waypoints.length - 2, (int) Math.floor(Math.max(0.0f, r.pathProgress))));
+      final Waypoint w0 = waypoints[curWp];
+      final Waypoint w1 = waypoints[curWp + 1];
+      final float segDist = Math.max(1.0f, (float) Math.hypot(w1.x - w0.x, w1.z - w0.z));
+      final float step = r.currentSpeed / segDist;
+      r.pathProgress += step;
+
+      // Launch queued jump immediately if racer reached or crossed takeoff point during this step
+      if (r.jumpQueued && upcomingHurdle != -1 && r.pathProgress >= upcomingHurdle && !r.isJumping) {
+        launchJump(r, upcomingHurdle, r.jumpSucceeded);
+      }
+
+      // Missed hurdle timeout (stumble) - triggers if racer stepped past takeoff without jumping
+      if (upcomingHurdle != -1 && !r.isJumping && !r.jumpQueued && r.lastHurdleIndex != upcomingHurdle) {
+        final float progressDist = (float) upcomingHurdle - r.pathProgress;
+        if (progressDist < -0.10f) {
+          r.lastHurdleIndex = upcomingHurdle;
+          handleMissedHurdle(r, upcomingHurdle);
+        }
+      }
+
+      // Update 3D position and rotation (smoothly rotating around corners)
+      updateRacerPose(r, waypoints, false);
+
+      // Jumping arc update and vertical height offset
+      if (r.isJumping) {
+        final float totalJumpLen = Math.max(0.1f, r.jumpEndProgress - r.jumpStartProgress);
+        final float jumpFraction = Math.max(0.0f, Math.min(1.0f, (r.pathProgress - r.jumpStartProgress) / totalJumpLen));
+        r.jumpProgress = jumpFraction;
+        final float jumpArc = (float) Math.sin(jumpFraction * Math.PI);
+        r.pos.y -= r.jumpArcHeight * jumpArc;
+        if (jumpFraction >= 1.0f) {
+          r.isJumping = false;
+          r.jumpProgress = 0.0f;
+        }
+      }
+    }
+
+    // Lap detection when crossing start/finish line in Cut 151
+    if (currentCut == 151 && !isFirstPass && !lapCountedThisPass) {
+      final int curIdx = Math.max(0, Math.min(playerWaypoints.length - 1, (int) Math.floor(Math.max(0.0f, playerRacer.pathProgress))));
+      if (playerWaypoints[curIdx].isFinishLine) {
+        lapCountedThisPass = true;
+        currentLap++;
+        LOGGER.info("LohanRaceManager: Crossed start/finish line! Completed lap %d of %d.", currentLap - 1, TOTAL_LAPS);
+        if (currentLap > TOTAL_LAPS) {
+          finishRace();
+          return;
+        }
+      }
+    }
+
+    // Sync all positions and animations to sobjs
+    syncRacersToSobjs(smap);
+
+    // Camera continuously tracks player racer
+    focusCamera(smap, playerRacer.pos);
+
+    // Scene transition when player reaches the end of current cut track
+    if (playerRacer.pathProgress >= playerWaypoints.length - 1) {
+      transitionToNextScene(smap);
+    }
+  }
+
+  private static float getHurdleArcHeight(final int cut, final int hurdleIndex) {
+    if (cut == 150) {
+      return 70.0f; // Water jump
+    } else if (cut == 149) {
+      return 55.0f; // Cut 149: doorway gap jump (index 2) and ramp barrier jump (index 6)
+    } else {
+      return 65.0f; // Cut 151 log hurdles
+    }
+  }
+
+  private static void launchJump(final Racer r, final int hurdleIndex, final boolean goodTiming) {
+    r.isJumping = true;
+    r.jumpQueued = false;
+    r.lastHurdleIndex = hurdleIndex;
+    r.jumpStartProgress = (float) hurdleIndex;
+    r.jumpEndProgress = (float) (hurdleIndex + 1);
+    r.jumpProgress = 0.0f;
+    r.jumpSucceeded = goodTiming;
+    r.jumpArcHeight = getHurdleArcHeight(currentCut, hurdleIndex);
+
+    if (goodTiming) {
+      r.boostTimer = 45;
+      r.slowTimer = 0;
+    }
+  }
+
+  private static void handleMissedHurdle(final Racer r, final int hurdleIndex) {
+    r.jumpQueued = false;
+    r.jumpSucceeded = false;
+    r.slowTimer = 50; // Speed penalty / stumble
+    r.boostTimer = 0;
+
+    final boolean isGap = (currentCut == 150) || (currentCut == 149 && hurdleIndex <= 3);
+    if (isGap) {
+      // Must hop across the gap with a low stumble arc so racer never walks on air
+      r.isJumping = true;
+      r.jumpStartProgress = (float) hurdleIndex;
+      r.jumpEndProgress = (float) (hurdleIndex + 1);
+      r.jumpProgress = 0.0f;
+      r.jumpArcHeight = 30.0f;
+    } else {
+      // Log obstacle / ramp barrier: hits barrier and stumbles forward
+      r.isJumping = false;
+    }
+
+    if (r.isPlayer) {
+      jumpFeedbackText = "MISSED!";
+      feedbackTicks = 40;
+      if (currentEngineState_8004dd04 instanceof final SMap smap) {
+        setAlertIndicator(smap, PLAYER_SOBJ, false);
+      }
+    }
+  }
+
+  private static void syncRacersToSobjs(final SMap smap) {
+    if (smap.sobjs_800c6880 == null) return;
+
+    for (final Racer r : racers) {
+      final int sobjIdx = r.isPlayer ? PLAYER_SOBJ : (r.id == 0 ? NPC1_SOBJ : NPC2_SOBJ);
+      if (sobjIdx < smap.sobjs_800c6880.length && smap.sobjs_800c6880[sobjIdx] != null) {
+        final SubmapObject210 sobj = smap.sobjs_800c6880[sobjIdx].innerStruct_00;
+        sobj.finishInterpolatedMovement();
+        sobj.finishInterpolatedRotationX();
+        sobj.finishInterpolatedRotationY();
+        sobj.finishInterpolatedRotationZ();
+        sobj.interpMovementTicksTotal = 0;
+        sobj.interpRotationTicksTotalY = 0;
+        sobj.rotationFrames_188 = 0;
+        sobj.hidden_128 = false;
+        // Keep collision disabled every frame — the engine can re-enable it via its internal tick
+        sobj.collisionSizeHorizontal_1a0 = 0;
+        sobj.collisionSizeVertical_1a4 = 0;
+        sobj.collisionReach_1b4 = 0;
+        sobj.ignoreCollision_172 = 1;
+
+        sobj.model_00.coord2_14.coord.transfer.set(r.pos);
+        sobj.model_00.coord2_14.transforms.rotate.set(r.rot);
+        sobj.model_00.coord2_14.transforms.scale.set(0.625f, 0.625f, 0.625f);
+
+        // Animation state machine:
+        // 0 = Idle (countdown & finish idle)
+        // 2 = Jump leap
+        // 3 = Running gallop
+        // 4 = Stumbling (slowTimer)
+        final boolean showJumpAnim = r.isJumping || r.jumpProgress > 0.0f;
+        final int targetAnim = (state == RaceState.COUNTDOWN || state == RaceState.START_FADING_OUT ||
+                                state == RaceState.FINISH_IDLE || state == RaceState.FINISH_FADING_OUT) ? 0 :
+                               (showJumpAnim ? 2 : (r.slowTimer > 0 ? 4 : 3));
+
+        if (targetAnim != 2) {
+          // Running / idle / stumbling: ensure animation is playing and loopable
+          sobj.disableAnimation_12a = false;
+          sobj.flags_190 &= ~0x6000_0000;
+        } else {
+          // Jump leap: set 0x4000_0000 so SMap freezes animation on last frame when leap completes in mid-air
+          sobj.flags_190 |= 0x4000_0000;
+        }
+
+        // Only reload animation if target animation changed or model has no animation loaded.
+        // For jump (targetAnim == 2), do NOT reload when disableAnimation_12a is set — it froze intentionally!
+        final boolean needsReload = (sobj.animIndex_132 != targetAnim) ||
+                                    (sobj.model_00.anim_08 == null) ||
+                                    (sobj.disableAnimation_12a && targetAnim != 2);
+
+        if (needsReload) {
+          final List<legend.game.types.TmdAnimationFile> anims = getCreatureAnimations(smap);
+          if (anims != null && targetAnim < anims.size() && anims.get(targetAnim) != null) {
+            r.currentAnimIndex = targetAnim;
+            sobj.animIndex_132 = targetAnim;
+            sobj.disableAnimation_12a = false;
+            if (targetAnim == 2) {
+              sobj.flags_190 |= 0x4000_0000;
+            } else {
+              sobj.flags_190 &= ~0x6000_0000;
+            }
+            sobj.animationFinishedFrames_12c = 0;
+            loadModelStandardAnimation(sobj.model_00, anims.get(targetAnim));
+          }
+        }
+      }
+    }
+  }
+
+  private static void focusCamera(final SMap smap, final Vector3f targetPos) {
+    // 1. Keep Dart hidden and parked out of bounds so Dart never collides with NPCs or triggers dialogues
+    if (smap.sobjs_800c6880 != null && smap.sobjs_800c6880.length > 0 && smap.sobjs_800c6880[0] != null) {
+      final ScriptState<SubmapObject210> dartState = smap.sobjs_800c6880[0];
+      final SubmapObject210 dartSobj = dartState.innerStruct_00;
+      if (isRaceActive()) {
+        dartSobj.hidden_128 = true;
+        dartSobj.cameraAttached_178 = false;
+        dartSobj.collisionSizeHorizontal_1a0 = 0;
+        dartSobj.collisionSizeVertical_1a4 = 0;
+        dartSobj.collisionReach_1b4 = 0;
+        dartSobj.collidedWithSobjIndex_19c = -1;
+        dartSobj.collidedWithSobjIndex_1a8 = -1;
+        dartSobj.model_00.coord2_14.coord.transfer.set(playerRacer.pos);
+      }
+    }
+
+    // Keep extra track creatures hidden and out of bounds during Cut 151
+    if (currentCut == 151 && smap.sobjs_800c6880 != null) {
+      for (int idx : new int[]{7, 11}) {
+        if (idx < smap.sobjs_800c6880.length && smap.sobjs_800c6880[idx] != null) {
+          final SubmapObject210 s = smap.sobjs_800c6880[idx].innerStruct_00;
+          s.hidden_128 = true;
+          s.model_00.coord2_14.coord.transfer.set(0.0f, 5000.0f, 0.0f);
+        }
+      }
+    }
+
+    // 2. Direct camera method call via reflection with current worldToScreenMatrix
+    try {
+      GTE.setTransforms(worldToScreenMatrix_800c3548);
+      if (setCameraPosMethod == null) {
+        setCameraPosMethod = SMap.class.getDeclaredMethod("setCameraPos", int.class, Vector3f.class);
+        setCameraPosMethod.setAccessible(true);
+      }
+      setCameraPosMethod.invoke(smap, 1, targetPos);
+    } catch (Throwable ignored) {
+    }
+  }
+
+  private static void transitionToNextScene(final SMap smap) {
+    // Scene cycle:
+    // Scene 1 (Cut 151 initial start) -> Scene 2 (Cut 150 bottom) -> Scene 3 (Cut 149 doorway) -> Scene 4 (Cut 151 full lap)
+    int nextCut;
+    int nextScene;
+
+    if (currentCut == 151) {
+      isFirstPass = false;
+      nextCut = 150;
+      nextScene = 0;
+    } else if (currentCut == 150) {
+      nextCut = 149;
+      nextScene = 11;
+    } else {
+      nextCut = 151;
+      nextScene = 0;
+    }
+
+    // Persist relative gap of each racer vs player into the next scene
+    for (final Racer r : racers) {
+      r.sceneEntryProgress = r.pathProgress - playerRacer.pathProgress;
+    }
+
+    state = RaceState.LAP_TRANSITION;
+    LOGGER.info("LohanRaceManager: Transitioning from cut %d to cut %d (scene %d)...", currentCut, nextCut, nextScene);
+    smap.mapTransition(nextCut, nextScene);
+  }
+
+  private static void finishRace() {
+    state = RaceState.FINISH_IDLE;
+    finishTicks = 90; // ~3 seconds racers idle and celebrate
+    finishFadeTicks = 16;
+    playMenuSound(1);
+    LOGGER.info("LohanRaceManager: Race finished! Player placement: %d", getPlayerPlacement());
+  }
+
+  private static void updateFinished() {
+    if (!(currentEngineState_8004dd04 instanceof final SMap smap)) return;
+
+    if (state == RaceState.FINISH_IDLE) {
+      finishTicks--;
+      // Keep racers idling on the track and camera locked
+      for (final Racer r : racers) {
+        final Waypoint[] laneWaypoints = getLaneWaypoints(r.laneIndex);
+        updateRacerPose(r, laneWaypoints, false);
+      }
+      syncRacersToSobjs(smap);
+      focusCamera(smap, playerRacer.pos);
+
+      if (finishTicks <= 0) {
+        startFadeEffect(1, 15); // Fade out to black
+        state = RaceState.FINISH_FADING_OUT;
+      }
+    } else if (state == RaceState.FINISH_FADING_OUT) {
+      finishFadeTicks--;
+      for (final Racer r : racers) {
+        final Waypoint[] laneWaypoints = getLaneWaypoints(r.laneIndex);
+        updateRacerPose(r, laneWaypoints, false);
+      }
+      syncRacersToSobjs(smap);
+      focusCamera(smap, playerRacer.pos);
+
+      if (finishFadeTicks <= 0) {
+        returnToVendor();
+      }
+    }
+  }
+
+  private static void returnToVendor() {
+    state = RaceState.INACTIVE;
+    enableRaceMusicOverride(false);
+    safelyClearHUDTextbox();
+    if (!(currentEngineState_8004dd04 instanceof final SMap smap)) return;
+
+    LOGGER.info("LohanRaceManager: Returning to Cut 151 vendor booth.");
+
+    // Award reward if won 1st place!
+    if (getPlayerPlacement() == 1) {
+      if (gameState_800babc8 != null && gameState_800babc8.scriptData_08 != null) {
+        gameState_800babc8.scriptData_08[27] = Math.min(99, gameState_800babc8.scriptData_08[27] + 3);
+        LOGGER.info("LohanRaceManager: Player won 1st place! Awarded 3 tickets (total=%d).", gameState_800babc8.scriptData_08[27]);
+      }
+    }
+
+    // Mark minigame as played in festival event so Dart and Shana's date progresses
+    // and Lavitz recognizes minigame completion to allow leaving the festival.
+    if (gameState_800babc8 != null) {
+      if (gameState_800babc8.scriptFlags1_13c != null) {
+        // 0x67 is the global minigame return flag checked by Cut 151/150/149 for post-minigame dialogue
+        gameState_800babc8.scriptFlags1_13c.set(0x67, true);
+      }
+      if (gameState_800babc8.scriptFlags2_bc != null) {
+        // 0x3be (958) and 0x3bf (959) are minigame-played flags checked by Lavitz at [122b] in Cut 149
+        gameState_800babc8.scriptFlags2_bc.set(0x3be, true);
+        gameState_800babc8.scriptFlags2_bc.set(0x3bf, true);
+        LOGGER.info("LohanRaceManager: Set festival minigame flags (0x67, 0x3be, 0x3bf) for Lavitz date progression.");
+      }
+    }
+
+    // Restore indicator config
+    if (savedIndicatorMode != null) {
+      try {
+        CONFIG.setConfig(CoreMod.INDICATOR_MODE_CONFIG.get(), savedIndicatorMode);
+      } catch (Throwable ignored) {
+      }
+      savedIndicatorMode = null;
+    }
+
+    // Stop minigame music if still active
+    try {
+      if (AUDIO_THREAD.getSongId() == 61 || AUDIO_THREAD.isMusicPlaying()) {
+        AUDIO_THREAD.stopSequence();
+      }
+      stopCurrentMusicSequence();
+    } catch (Throwable ignored) {
+    }
+
+    // Ensure state restoration before battle/event kicks in so SMap cleanly restores Dart
+    // to the exact pre-minigame position and camera screen offset
+    try {
+      submapCutBeforeBattle_80052c3c = 151;
+      shouldRestoreCameraPosition_80052c40 = true;
+      playerPositionBeforeBattle_800bed30.transfer.set(dartSavedPos);
+    } catch (Throwable ignored) {
+    }
+
+    // Clean map transition back to Cut 151 scene 5 (Booth area)
+    currentCut = 151;
+    smap.mapTransition(151, 5);
+  }
+
+  private static Waypoint[] getLaneWaypoints(final int laneIndex) {
+    final Waypoint[][] lanes;
+    if (currentCut == 150) {
+      lanes = CUT_150_LANES;
+    } else if (currentCut == 149) {
+      lanes = CUT_149_LANES;
+    } else {
+      lanes = isFirstPass ? CUT_151_START_LANES : CUT_151_FULL_LANES;
+    }
+    final int safeLane = Math.max(0, Math.min(lanes.length - 1, laneIndex));
+    return lanes[safeLane];
+  }
+
+  private static int findUpcomingHurdle(final Racer r, final Waypoint[] waypoints) {
+    if (waypoints.length == 0) return -1;
+    final int currentIdx = Math.max(0, (int) Math.floor(Math.max(0.0f, r.pathProgress)));
+    for (int i = currentIdx; i < Math.min(waypoints.length, currentIdx + 3); i++) {
+      if (waypoints[i].isHurdle) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private static void updateRacerPose(final Racer r, final Waypoint[] waypoints, final boolean instantYaw) {
+    if (waypoints.length < 2) return;
+
+    if (r.pathProgress < 0.0f) {
+      // Extrapolate backward along entry vector
+      final Waypoint p0 = waypoints[0];
+      final Waypoint p1 = waypoints[1];
+      final float dx = p1.x - p0.x;
+      final float dy = p1.y - p0.y;
+      final float dz = p1.z - p0.z;
+      r.pos.x = p0.x + dx * r.pathProgress;
+      r.pos.y = p0.y + dy * r.pathProgress;
+      r.pos.z = p0.z + dz * r.pathProgress;
+      r.groundY = r.pos.y;
+      final float targetYaw = MathHelper.positiveAtan2(dz, dx);
+      if (instantYaw) {
+        r.rot.y = targetYaw;
+      } else {
+        smoothRotateY(r, targetYaw);
+      }
+      return;
+    }
+
+    final int idx = Math.max(0, Math.min(waypoints.length - 2, (int) Math.floor(r.pathProgress)));
+    final float t = Math.max(0.0f, Math.min(1.0f, r.pathProgress - idx));
+
+    final Waypoint p0 = waypoints[idx];
+    final Waypoint p1 = waypoints[idx + 1];
+
+    r.pos.x = p0.x + (p1.x - p0.x) * t;
+    r.pos.y = p0.y + (p1.y - p0.y) * t;
+    r.pos.z = p0.z + (p1.z - p0.z) * t;
+    r.groundY = r.pos.y;
+
+    final float dx = p1.x - p0.x;
+    final float dz = p1.z - p0.z;
+    final float targetYaw = MathHelper.positiveAtan2(dz, dx);
+    if (instantYaw) {
+      r.rot.y = targetYaw;
+    } else {
+      smoothRotateY(r, targetYaw);
+    }
+  }
+
+  private static void smoothRotateY(final Racer r, final float targetYaw) {
+    float diff = (targetYaw - r.rot.y) % (float) (Math.PI * 2);
+    if (diff < -Math.PI) diff += (float) (Math.PI * 2);
+    if (diff > Math.PI) diff -= (float) (Math.PI * 2);
+    r.rot.y += diff * 0.35f;
+  }
+
+  private static void setAlertIndicator(final SMap smap, final int sobjIndex, final boolean show) {
+    if (smap != null && smap.sobjs_800c6880 != null && sobjIndex < smap.sobjs_800c6880.length && smap.sobjs_800c6880[sobjIndex] != null) {
+      final SubmapObject210 sobj = smap.sobjs_800c6880[sobjIndex].innerStruct_00;
+      sobj.showAlertIndicator_194 = show;
+      sobj.alertIndicatorOffsetY_198 = -30;
+    }
+  }
+
+  public static int getPlayerPlacement() {
+    int placement = 1;
+    if (npcRacer1.pathProgress > playerRacer.pathProgress) placement++;
+    if (npcRacer2.pathProgress > playerRacer.pathProgress) placement++;
+    return placement;
+  }
+
+  private static void renderPlayerArrow() {
+    if (!isRaceActive()) return;
+    if (!(currentEngineState_8004dd04 instanceof final SMap smap)) return;
+    if (smap.sobjs_800c6880 == null || smap.sobjs_800c6880.length <= PLAYER_SOBJ || smap.sobjs_800c6880[PLAYER_SOBJ] == null) return;
+
+    try {
+      if (renderTriangleIndicatorsMethod == null) {
+        renderTriangleIndicatorsMethod = SMap.class.getDeclaredMethod("renderTriangleIndicators");
+        renderTriangleIndicatorsMethod.setAccessible(true);
+        triangleIndicatorsField = SMap.class.getDeclaredField("triangleIndicators_800c69fc");
+        triangleIndicatorsField.setAccessible(true);
+      }
+
+      final TriangleIndicator140 indicator = (TriangleIndicator140) triangleIndicatorsField.get(smap);
+      if (indicator != null) {
+        final SubmapObject210 playerSobj = smap.sobjs_800c6880[PLAYER_SOBJ].innerStruct_00;
+        final MV ls = new MV();
+        GsGetLs(playerSobj.model_00.coord2_14, ls);
+        PushMatrix();
+        GTE.setTransforms(ls);
+        GTE.perspectiveTransform(0, -35, 0);
+        indicator.playerX_08 = GTE.getScreenX(2);
+        indicator.playerY_0c = GTE.getScreenY(2);
+        PopMatrix();
+
+        // Suppress door indicators so only Dart's blue player arrow renders
+        final short oldType0 = (indicator.indicatorType_18 != null && indicator.indicatorType_18.length > 0) ? indicator.indicatorType_18[0] : -1;
+        if (indicator.indicatorType_18 != null) {
+          for (int i = 0; i < indicator.indicatorType_18.length; i++) {
+            indicator.indicatorType_18[i] = -1;
+          }
+        }
+
+        renderTriangleIndicatorsMethod.invoke(smap);
+
+        if (indicator.indicatorType_18 != null && indicator.indicatorType_18.length > 0) {
+          indicator.indicatorType_18[0] = oldType0;
+        }
+      }
+    } catch (Throwable t) {
+      LOGGER.error("Failed to render player arrow", t);
+    }
+  }
+
+  private static void renderRaceHUD() {
+    if (state == RaceState.START_FADING_OUT) {
+      safelyClearHUDTextbox();
+    } else if (state == RaceState.COUNTDOWN) {
+      final int count = (countdownTicks / 30);
+      final String countText = count >= 3 ? "  READY... 3  " : (count == 2 ? "  READY... 2  " : (count == 1 ? "  READY... 1  " : "     GO!    "));
+      openRaceHUDTextbox(countText, 135, 40, 16, 1);
+    } else if (state == RaceState.RACING) {
+      final int placement = getPlayerPlacement();
+      final String placeStr = placement == 1 ? "1st" : (placement == 2 ? "2nd" : "3rd");
+      final String lapStr = currentLap >= TOTAL_LAPS ? "FINAL LAP!" : ("LAP " + currentLap + "/" + TOTAL_LAPS);
+
+      String hudText = lapStr + " | " + placeStr;
+      if (feedbackTicks > 0) {
+        feedbackTicks--;
+        hudText += "\n" + jumpFeedbackText;
+      }
+      openRaceHUDTextbox(hudText, 120, 20, 18, feedbackTicks > 0 ? 2 : 1);
+    } else if (state == RaceState.FINISH_IDLE || state == RaceState.FINISH_FADING_OUT) {
+      final int finalPlacement = getPlayerPlacement();
+      final String result = finalPlacement == 1 ? "★ 1st PLACE! VICTORY! ★\n+3 TICKETS WON!" : ("FINISH! " + finalPlacement + (finalPlacement == 2 ? "nd" : "rd") + " PLACE\nBETTER LUCK NEXT TIME!");
+      openRaceHUDTextbox(result, 100, 40, 24, 2);
+    } else {
+      safelyClearHUDTextbox();
+    }
+  }
+
+  private static String lastHudText = "";
+
+  private static void openRaceHUDTextbox(final String text, final int x, final int y, final int chars, final int lines) {
+    if (text.equals(lastHudText)) {
+      return;
+    }
+    lastHudText = text;
+    safelyClearHUDTextbox();
+
+    final Textbox4c textbox = textboxes_800be358[2];
+    final TextboxText84 textboxText = textboxText_800bdf38[2];
+
+    textbox.backgroundType_04 = BackgroundType.NORMAL;
+    textbox.renderBorder_06 = true;
+    textbox.flags_08 = Textbox4c.RENDER_BACKGROUND | Textbox4c.NO_ANIMATE_OUT;
+    textbox.state_00 = TextboxState._6;
+    textbox.x_14 = x;
+    textbox.y_16 = y;
+    textbox.chars_18 = chars + 1;
+    textbox.lines_1a = lines + 1;
+    textbox.width_1c = textbox.chars_18 * 9 / 2;
+    textbox.height_1e = textbox.lines_1a * 6;
+    textbox.oldW = 0;
+    textbox.oldH = 0;
+
+    textboxText.type_04 = TextboxType.SIMPLE.id;
+    textboxText.flags_08 = TextboxText84.NO_INPUT;
+    textboxText.str_24 = new LodString(text);
+    textboxText.chars_1c = textbox.chars_18 - 1;
+    textboxText.lines_1e = lines;
+    textboxText.chars_58 = new TextboxChar08[textboxText.chars_1c * (textboxText.lines_1e + 1)];
+    Arrays.setAll(textboxText.chars_58, i -> new TextboxChar08());
+    textboxText.charIndex_30 = 0;
+    textboxText.charX_34 = 0;
+    textboxText.charY_36 = 0;
+    textboxText.state_00 = TextboxTextState.PROCESS_TEXT_4;
+
+    calculateAppropriateTextboxBounds(2, x, y);
+
+    while (textboxText.charIndex_30 < textboxText.str_24.length()
+      && textboxText.state_00 != TextboxTextState.CLOSE_TEXTBOX_15) {
+      Text.processTextboxCharacter(2);
+    }
+    textboxText.state_00 = TextboxTextState.CLOSE_BATTLE_NO_INPUT_16;
+  }
+
+  private static void safelyClearHUDTextbox() {
+    try {
+      lastHudText = "";
+      clearTextbox(2);
+      clearTextboxText(2);
+
+      final TextboxText84 tbText = textboxText_800bdf38[2];
+      tbText.state_00 = TextboxTextState.UNINITIALIZED_0;
+      tbText.chars_58 = null;
+
+      final Textbox4c tb = textboxes_800be358[2];
+      tb.state_00 = TextboxState.UNINITIALIZED_0;
+      tb.flags_08 = 0;
+      tb.width_1c = 0;
+      tb.height_1e = 0;
+    } catch (Exception ignored) {
+    }
+  }
+}

@@ -1,0 +1,15 @@
+tvvlr_multimod.mod.name=Tvvlr's Multimod
+tvvlr_multimod.name=Tvvlr's Multimod
+tvvlr_multimod.mod.description=Combines Advanced Additions and Lohan Racing Minigame with an integrated settings menu.
+tvvlr_multimod.input_actions.addition_square.name=Addition: Square / X
+tvvlr_multimod.input_actions.addition_triangle.name=Addition: Triangle / Y
+tvvlr_multimod.config.advanced_additions_enabled.name=Advanced Additions
+tvvlr_multimod.config.advanced_additions_enabled.description=Randomizes additions to also include Square and Triangle, matching controller face button colors.
+tvvlr_multimod.config.racing_minigame_enabled.name=Racing Minigame
+tvvlr_multimod.config.racing_minigame_enabled.description=Enables the Lohan racing minigame, tickets, and NPC.
+tvvlr_multimod.config.controller_theme.name=Controller Colors
+tvvlr_multimod.config.controller_theme.description=Button color theme used for additions (Auto detects your active controller).
+tvvlr_multimod.config.controller_theme.AUTO=Auto (Detect Controller)
+tvvlr_multimod.config.controller_theme.PLAYSTATION=PlayStation (Cross=Blue, Square=Pink, Triangle=Green)
+tvvlr_multimod.config.controller_theme.XBOX=Xbox (A=Green, B=Red, X=Blue, Y=Yellow)
+tvvlr_multimod.config.controller_theme.SWITCH=Nintendo Switch (B=Yellow, A=Red, Y=Green, X=Blue)

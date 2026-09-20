@@ -1,0 +1,7 @@
+# Tvvlr's Dragoon Multimod - .gitignore
+bin/
+*.class
+*.jar
+!tvvlr-multimod.jar
+.DS_Store
+Thumbs.db
