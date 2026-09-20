@@ -10,6 +10,7 @@ import legend.core.platform.input.InputAction;
 import legend.core.platform.input.InputButton;
 import legend.core.platform.input.InputKey;
 import legend.core.platform.input.InputMod;
+import legend.core.renderer.DepthComparator;
 import legend.core.renderer.QueuedModelBattleTmd;
 import legend.game.additions.Addition;
 import legend.game.inventory.screens.HorizontalAlign;
@@ -104,8 +105,16 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
   private int currentDemonstrationHit = 0;
   private final TmdAnimationFile[] currentAdditionAnimCache = new TmdAnimationFile[16];
   private final MV tempLw = new MV();
-  private final Matrix3f studioLightDir = new Matrix3f().identity();
-  private final Matrix3f studioLightColour = new Matrix3f().identity();
+  private final Matrix3f studioLightDir = new Matrix3f(
+    -0.577f, -0.577f, 0.577f,
+    -0.577f, -0.577f, 0.577f,
+    -0.577f, -0.577f, 0.577f
+  );
+  private final Matrix3f studioLightColour = new Matrix3f(
+    0.9f, 0.9f, 0.9f,
+    0.9f, 0.9f, 0.9f,
+    0.9f, 0.9f, 0.9f
+  );
   private final Vector3f studioAmbient = new Vector3f(0.85f, 0.85f, 0.85f);
 
   // Bottom action
@@ -275,8 +284,8 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       }
 
       final float previewCenterX = 306.0f;
-      final float previewCenterY = 162.0f; // character feet ground level
-      final float previewCenterZ = 150.0f; // Positive Z to stay well within ortho near plane
+      final float previewCenterY = 135.0f; // character hips ground level
+      final float previewCenterZ = 200.0f; // Safe positive Z (> 160)
       final float scale = this.getCharacterScale(this.selectedCharIndex);
 
       this.activeModel.coord2_14.flg = 0;
@@ -290,7 +299,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
       // Set scale and rotation, apply, THEN set translation
       this.activeModel.coord2_14.transforms.scale.set(scale, scale, scale);
-      this.activeModel.coord2_14.transforms.rotate.set(0.10f, -0.45f, 0.0f);
+      this.activeModel.coord2_14.transforms.rotate.set(0.05f, -0.40f, 0.0f);
       applyModelRotationAndScale(this.activeModel);
       this.activeModel.coord2_14.coord.transfer.set(previewCenterX, previewCenterY, previewCenterZ);
 
@@ -306,7 +315,8 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
                 .backgroundColour(new Vector3f(1.0f, 1.0f, 1.0f))
                 .battleColour(new Vector3f(1.0f, 1.0f, 1.0f))
                 .ctmdFlags(0)
-                .tmdTranslucency(this.activeModel.tpage_108 >>> 5 & 0b11);
+                .tmdTranslucency(this.activeModel.tpage_108 >>> 5 & 0b11)
+                .opaqueDepthComparator(DepthComparator.LESS_THAN_OR_EQUAL);
 
               if (this.characterGpu != null && this.characterGpu.vramTexture15 != null) {
                 queue.texture(this.characterGpu.vramTexture15, 1);
@@ -418,7 +428,6 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
           this.characterGpu.vramTexture15.delete();
         }
         this.characterGpu = new Gpu();
-        this.characterGpu.initVram();
 
         final Rect4i combatantTimRect = combatantTimRects_800fa6e0[1]; // (320, 256, 64, 256)
         this.characterGpu.uploadData15(combatantTimRect, tim.getImageData());
@@ -430,6 +439,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
           this.characterGpu.uploadData15(clutRect, tim.getClutData());
         }
 
+        this.characterGpu.initVram();
         this.characterGpu.updateVramTexture();
       }
 
