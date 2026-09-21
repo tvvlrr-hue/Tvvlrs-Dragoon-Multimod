@@ -40,10 +40,16 @@ import java.util.List;
 import java.util.Set;
 
 import static legend.core.GameEngine.GPU;
+import static legend.core.GameEngine.PLATFORM;
 import static legend.core.GameEngine.REGISTRIES;
 import static legend.core.GameEngine.RENDERER;
+import legend.core.MathHelper;
+import legend.core.platform.input.InputAxis;
+import legend.core.platform.input.InputAxisDirection;
 import static legend.game.FullScreenEffects.startFadeEffect;
 import static legend.game.Graphics.GsGetLw;
+import static legend.game.Graphics.getProjectionPlaneDistance;
+import static legend.game.Graphics.setProjectionPlaneDistance;
 import static legend.game.Menus.deallocateRenderables;
 import static legend.game.Models.adjustModelUvs;
 import static legend.game.Models.animateModel;
@@ -55,6 +61,8 @@ import static legend.game.combat.Battle.combatantTimRects_800fa6e0;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_BACK;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_CONFIRM;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_DOWN;
+import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_END;
+import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_HOME;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_LEFT;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_PAGE_DOWN;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_PAGE_UP;
@@ -64,7 +72,7 @@ import static legend.game.sound.Audio.playMenuSound;
 
 public class CustomAdditionsConfigScreen extends MenuScreen {
   private static final int MAX_ADDITION_SLOTS = 7;
-  private static final int MAX_HIT_SLOTS = 6;
+  private static final int MAX_HIT_SLOTS = 7;
 
   private final Runnable unload;
 
@@ -105,6 +113,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
   private int currentDemonstrationHit = 0;
   private final TmdAnimationFile[] currentAdditionAnimCache = new TmdAnimationFile[16];
   private final MV tempLw = new MV();
+  private int animFrameCounter = 0; // Throttle animation to ~20 FPS
   private final Matrix3f studioLightDir = new Matrix3f(
     -0.577f, -0.577f, 0.577f,
     -0.577f, -0.577f, 0.577f,
@@ -116,12 +125,22 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     0.9f, 0.9f, 0.9f
   );
   private final Vector3f studioAmbient = new Vector3f(0.85f, 0.85f, 0.85f);
+  private final Label previewRotateHintLabel;
+  private float previewRotationY = -0.40f;
+  private float leftTriggerAxis = 0.0f;
+  private float rightTriggerAxis = 0.0f;
+  private boolean rotateLeftHeld = false;
+  private boolean rotateRightHeld = false;
 
   // Bottom action
   private final Button saveButton;
   private final Label statusLabel;
+  private final float originalProjectionPlaneDistance;
 
   public CustomAdditionsConfigScreen(final Runnable unload) {
+    this.originalProjectionPlaneDistance = getProjectionPlaneDistance();
+    setProjectionPlaneDistance(1.0f);
+
     deallocateRenderables(0xff);
     startFadeEffect(2, 10);
 
@@ -235,6 +254,13 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     this.hitHintLabel2.setPos(132, 178);
     this.hitHintLabel2.setWidth(112);
 
+    // Help text below preview (x = 250..362)
+    this.previewRotateHintLabel = this.addControl(new Label(new RawText("[LT / RT] Rotate")));
+    this.previewRotateHintLabel.getFontOptions().horizontalAlign(HorizontalAlign.CENTRE);
+    this.previewRotateHintLabel.getFontOptions().colour(TextColour.GREY).shadowColour(TextColour.BLACK);
+    this.previewRotateHintLabel.setPos(250, 178);
+    this.previewRotateHintLabel.setWidth(112);
+
     // Save Button (y = 198)
     this.saveButton = this.addControl(new Button(new RawText("SAVE CONFIGURATION")));
     this.saveButton.setPos((screenWidth - 170) / 2, 198);
@@ -258,14 +284,61 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   @Override
   protected void delete() {
+    setProjectionPlaneDistance(this.originalProjectionPlaneDistance);
     this.cleanupModel();
     super.delete();
   }
 
   @Override
   protected void render() {
+    setProjectionPlaneDistance(1.0f);
     if (this.activeModel != null) {
-      animateModel(this.activeModel, 2);
+      // Smooth trigger and key model rotation
+      float lt = 0.0f;
+      float rt = 0.0f;
+      try {
+        lt = Math.max(lt, PLATFORM.getAxis(INPUT_ACTION_MENU_HOME.get()));
+        rt = Math.max(rt, PLATFORM.getAxis(INPUT_ACTION_MENU_END.get()));
+      } catch (final Throwable ignored) {
+      }
+      lt = Math.max(lt, this.leftTriggerAxis);
+      rt = Math.max(rt, this.rightTriggerAxis);
+      if (this.rotateLeftHeld) {
+        lt = Math.max(lt, 1.0f);
+      }
+      if (this.rotateRightHeld) {
+        rt = Math.max(rt, 1.0f);
+      }
+
+      this.leftTriggerAxis *= 0.8f;
+      if (this.leftTriggerAxis < 0.05f) {
+        this.leftTriggerAxis = 0.0f;
+      }
+      this.rightTriggerAxis *= 0.8f;
+      if (this.rightTriggerAxis < 0.05f) {
+        this.rightTriggerAxis = 0.0f;
+      }
+
+      final float rotSpeed = 0.05f;
+      if (lt > 0.05f) {
+        this.previewRotationY -= lt * rotSpeed;
+      }
+      if (rt > 0.05f) {
+        this.previewRotationY += rt * rotSpeed;
+      }
+
+      if (this.previewRotationY > MathHelper.PI) {
+        this.previewRotationY -= MathHelper.TWO_PI;
+      } else if (this.previewRotationY < -MathHelper.PI) {
+        this.previewRotationY += MathHelper.TWO_PI;
+      }
+
+      // Throttle animation to ~20 FPS (advance every 3rd frame at 60 FPS, 2 keyframes per tick for 2x speed)
+      this.animFrameCounter++;
+      if (this.animFrameCounter >= 3) {
+        this.animFrameCounter = 0;
+        animateModel(this.activeModel, 2);
+      }
 
       // Whole addition demonstration flow when browsing additions (focusArea == 1)
       if (this.focusArea == 1 && this.activeModel.remainingFrames_9e == 0) {
@@ -273,8 +346,13 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         if (this.selectedAdditionIndex < charCat.additions.size()) {
           final CustomAdditionsStorage.AdditionDefinition def = charCat.additions.get(this.selectedAdditionIndex);
           final int totalComboHits = def.hitCount + 1;
-          this.currentDemonstrationHit = (this.currentDemonstrationHit + 1) % totalComboHits;
-          final TmdAnimationFile nextAnim = this.loadHitAnimation(this.selectedCharIndex, this.selectedAdditionIndex, this.currentDemonstrationHit);
+          TmdAnimationFile nextAnim = null;
+          int attempts = 0;
+          while (nextAnim == null && attempts < totalComboHits) {
+            this.currentDemonstrationHit = (this.currentDemonstrationHit + 1) % totalComboHits;
+            nextAnim = this.loadHitAnimation(this.selectedCharIndex, this.selectedAdditionIndex, this.currentDemonstrationHit);
+            attempts++;
+          }
           if (nextAnim != null) {
             loadModelStandardAnimation(this.activeModel, nextAnim);
             this.activeModel.animationState_9c = 1;
@@ -284,8 +362,8 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       }
 
       final float previewCenterX = 306.0f;
-      final float previewCenterY = 135.0f; // character hips ground level
-      final float previewCenterZ = 200.0f; // Safe positive Z (> 160)
+      final float previewCenterY = 160.0f; // Model origin is at feet; model extends upward
+      final float previewCenterZ = 200.0f; // In front of Background (Z=400) and > zfar/2 (0.5) to avoid culling
       final float scale = this.getCharacterScale(this.selectedCharIndex);
 
       this.activeModel.coord2_14.flg = 0;
@@ -297,11 +375,28 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
         }
       }
 
-      // Set scale and rotation, apply, THEN set translation
+      // Set scale and rotation, apply, THEN set translation with treadmill cancellation
       this.activeModel.coord2_14.transforms.scale.set(scale, scale, scale);
-      this.activeModel.coord2_14.transforms.rotate.set(0.05f, -0.40f, 0.0f);
+      this.activeModel.coord2_14.transforms.rotate.set(0.05f, this.previewRotationY, 0.0f);
       applyModelRotationAndScale(this.activeModel);
-      this.activeModel.coord2_14.coord.transfer.set(previewCenterX, previewCenterY, previewCenterZ);
+
+      // Treadmill compensation: cancel horizontal forward/lateral displacement so the character animates in-place
+      float rootOffsetX = 0.0f;
+      float rootOffsetZ = 0.0f;
+      if (this.activeModel.modelParts_00 != null
+          && this.activeModel.modelParts_00.length > 0
+          && this.activeModel.modelParts_00[0] != null
+          && this.activeModel.modelParts_00[0].coord2_04 != null) {
+        final float curRootX = this.activeModel.modelParts_00[0].coord2_04.coord.transfer.x;
+        final float curRootZ = this.activeModel.modelParts_00[0].coord2_04.coord.transfer.z;
+        final Vector3f disp = new Vector3f(curRootX, 0.0f, curRootZ);
+        final Vector3f worldDisp = new Vector3f();
+        disp.mul(this.activeModel.coord2_14.coord, worldDisp);
+        rootOffsetX = worldDisp.x;
+        rootOffsetZ = worldDisp.z;
+      }
+
+      this.activeModel.coord2_14.coord.transfer.set(previewCenterX - rootOffsetX, previewCenterY, previewCenterZ - rootOffsetZ);
 
       if (this.activeModel.modelParts_00 != null) {
         for (int i = 0; i < this.activeModel.modelParts_00.length; i++) {
@@ -335,6 +430,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     this.selectedAdditionIndex = 0;
     this.selectedHitIndex = 0;
     this.focusArea = 1;
+    this.previewRotationY = -0.40f;
     this.clearAnimCache();
     this.loadCharacter(this.selectedCharIndex);
   }
@@ -344,11 +440,14 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     final ControllerTheme theme = ControllerTheme.getActiveTheme();
     final String lBumper = theme == ControllerTheme.XBOX ? "[LB]" : (theme == ControllerTheme.SWITCH ? "[L]" : "[L1]");
     final String rBumper = theme == ControllerTheme.XBOX ? "[RB]" : (theme == ControllerTheme.SWITCH ? "[R]" : "[R1]");
+    final String ltLabel = theme == ControllerTheme.XBOX ? "LT" : (theme == ControllerTheme.SWITCH ? "ZL" : "L2");
+    final String rtLabel = theme == ControllerTheme.XBOX ? "RT" : (theme == ControllerTheme.SWITCH ? "ZR" : "R2");
     final int total = CustomAdditionsStorage.CHARACTERS.size();
 
     this.prevCharButton.setText(new RawText(lBumper));
     this.charLabel.setText(new RawText("<  " + character.characterName.toUpperCase() + " (" + (this.selectedCharIndex + 1) + "/" + total + ")  >"));
     this.nextCharButton.setText(new RawText(rBumper));
+    this.previewRotateHintLabel.setText(new RawText("[" + ltLabel + " / " + rtLabel + "] Rotate"));
   }
 
   private void loadCharacter(final int index) {
@@ -379,12 +478,13 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
   }
 
   private String getCharacterKey(final int charIndex) {
+    // Must match CHARACTERS list order in CustomAdditionsStorage
     return switch (charIndex) {
       case 0 -> "dart";
       case 1 -> "lavitz";
-      case 2 -> "rose";
-      case 3 -> "haschel";
-      case 4 -> "albert";
+      case 2 -> "albert";
+      case 3 -> "rose";
+      case 4 -> "haschel";
       case 5 -> "meru";
       case 6 -> "kongol";
       default -> "dart";
@@ -392,15 +492,16 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
   }
 
   private float getCharacterScale(final int charIndex) {
+    // Must match CHARACTERS list order in CustomAdditionsStorage
     return switch (charIndex) {
-      case 0 -> 0.26f; // Dart
-      case 1 -> 0.25f; // Lavitz
-      case 2 -> 0.26f; // Rose
-      case 3 -> 0.26f; // Haschel
-      case 4 -> 0.25f; // Albert
-      case 5 -> 0.28f; // Meru
-      case 6 -> 0.20f; // Kongol
-      default -> 0.25f;
+      case 0 -> 0.07f; // Dart
+      case 1 -> 0.07f; // Lavitz
+      case 2 -> 0.07f; // Albert
+      case 3 -> 0.07f; // Rose
+      case 4 -> 0.07f; // Haschel
+      case 5 -> 0.08f; // Meru (smaller model)
+      case 6 -> 0.055f; // Kongol (larger model)
+      default -> 0.07f;
     };
   }
 
@@ -727,8 +828,9 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   private void save() {
     CustomAdditionsStorage.save();
+    TvvlrMultimod.setAdditionMode(AdditionMode.CUSTOM);
     playMenuSound(2);
-    this.statusLabel.setText(new RawText("Custom addition mappings saved successfully!"));
+    this.statusLabel.setText(new RawText("Saved! Custom additions mode ACTIVE."));
     // After saving, return focus to additions list
     this.focusArea = 1;
     this.refreshVisuals();
@@ -736,6 +838,7 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
 
   private void back() {
     playMenuSound(3);
+    setProjectionPlaneDistance(this.originalProjectionPlaneDistance);
     this.cleanupModel();
     this.unload.run();
   }
@@ -873,7 +976,44 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       }
     }
 
+    // Trigger rotation actions
+    if (action == INPUT_ACTION_MENU_HOME.get()) {
+      this.rotateLeftHeld = true;
+      return InputPropagation.HANDLED;
+    }
+    if (action == INPUT_ACTION_MENU_END.get()) {
+      this.rotateRightHeld = true;
+      return InputPropagation.HANDLED;
+    }
+
     return super.inputActionPressed(action, repeat);
+  }
+
+  @Override
+  protected InputPropagation inputActionReleased(final InputAction action) {
+    if (action == INPUT_ACTION_MENU_HOME.get()) {
+      this.rotateLeftHeld = false;
+      return InputPropagation.HANDLED;
+    }
+    if (action == INPUT_ACTION_MENU_END.get()) {
+      this.rotateRightHeld = false;
+      return InputPropagation.HANDLED;
+    }
+    return super.inputActionReleased(action);
+  }
+
+  @Override
+  protected InputPropagation axis(final InputAxis axis, final InputAxisDirection direction, final float menuValue, final float movementValue) {
+    final float val = Math.max(menuValue, movementValue);
+    if (axis == InputAxis.LEFT_TRIGGER) {
+      this.leftTriggerAxis = val;
+      return InputPropagation.HANDLED;
+    }
+    if (axis == InputAxis.RIGHT_TRIGGER) {
+      this.rightTriggerAxis = val;
+      return InputPropagation.HANDLED;
+    }
+    return super.axis(axis, direction, menuValue, movementValue);
   }
 
   @Override
@@ -919,6 +1059,16 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
       return InputPropagation.HANDLED;
     }
 
+    // Keyboard rotation: [ / ] or Z / C or Home / End
+    if (key == InputKey.LEFT_BRACKET || key == InputKey.Z || key == InputKey.HOME) {
+      this.rotateLeftHeld = true;
+      return InputPropagation.HANDLED;
+    }
+    if (key == InputKey.RIGHT_BRACKET || key == InputKey.C || key == InputKey.END) {
+      this.rotateRightHeld = true;
+      return InputPropagation.HANDLED;
+    }
+
     if (this.focusArea == 2 && !repeat) {
       // Keyboard 1 = Cross, 2 = Square, 3 = Triangle
       if (key == InputKey.NUM_1 || key == InputKey.KP_1) {
@@ -936,5 +1086,18 @@ public class CustomAdditionsConfigScreen extends MenuScreen {
     }
 
     return super.keyPress(key, scancode, mods, repeat);
+  }
+
+  @Override
+  protected InputPropagation keyRelease(final InputKey key, final InputKey scancode, final Set<InputMod> mods) {
+    if (key == InputKey.LEFT_BRACKET || key == InputKey.Z || key == InputKey.HOME) {
+      this.rotateLeftHeld = false;
+      return InputPropagation.HANDLED;
+    }
+    if (key == InputKey.RIGHT_BRACKET || key == InputKey.C || key == InputKey.END) {
+      this.rotateRightHeld = false;
+      return InputPropagation.HANDLED;
+    }
+    return super.keyRelease(key, scancode, mods);
   }
 }

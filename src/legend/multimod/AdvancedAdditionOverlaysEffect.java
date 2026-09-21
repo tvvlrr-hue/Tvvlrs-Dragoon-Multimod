@@ -37,6 +37,7 @@ import static legend.core.GameEngine.CONFIG;
 import static legend.core.GameEngine.GPU;
 import static legend.core.GameEngine.PLATFORM;
 import static legend.core.GameEngine.RENDERER;
+import static legend.core.GameEngine.SCRIPTS;
 import static legend.game.Text.renderText;
 import static legend.game.combat.SEffe.additionHitCompletionState_8011a014;
 import static legend.game.combat.SEffe.additionOverlayActive_80119f41;
@@ -110,28 +111,44 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
 
   private boolean applyCustomHitButtons() {
     try {
-      if (TvvlrMultimod.currentBattle != null) {
-        final ScriptState<? extends BattleEntity27c> bentState = TvvlrMultimod.currentBattle.currentTurnBent_800c66c8;
-        if (bentState != null && bentState.innerStruct_00 instanceof PlayerBattleEntity pbe) {
-          String addId = null;
-          if (pbe.selectedAddition_58 != null) {
-            addId = pbe.selectedAddition_58.toString();
-          } else if (pbe.addition != null && pbe.addition.getRegistryId() != null) {
-            addId = pbe.addition.getRegistryId().toString();
+      PlayerBattleEntity pbe = null;
+      if (SCRIPTS != null && this.attackerScriptIndex_00 >= 0) {
+        try {
+          final BattleEntity27c attacker = SCRIPTS.getObject(this.attackerScriptIndex_00, BattleEntity27c.class);
+          if (attacker instanceof PlayerBattleEntity p) {
+            pbe = p;
           }
-          if (addId != null) {
-            final List<AdditionButtonType> custom = CustomAdditionsStorage.getCustomButtons(addId);
-            if (custom != null && !custom.isEmpty()) {
-              for (int i = 0; i < this.count_30; i++) {
-                if (i < custom.size()) {
-                  this.hitButtonTypes[i] = custom.get(i);
-                } else {
-                  this.hitButtonTypes[i] = AdditionButtonType.CROSS;
-                }
+        } catch (final Throwable ignored) {
+        }
+      }
+      if (pbe == null && TvvlrMultimod.currentBattle != null) {
+        final ScriptState<? extends BattleEntity27c> bentState = TvvlrMultimod.currentBattle.currentTurnBent_800c66c8;
+        if (bentState != null && bentState.innerStruct_00 instanceof PlayerBattleEntity p) {
+          pbe = p;
+        }
+      }
+      if (pbe != null) {
+        String addId = null;
+        if (pbe.selectedAddition_58 != null) {
+          addId = pbe.selectedAddition_58.toString();
+        } else if (pbe.addition != null && pbe.addition.getRegistryId() != null) {
+          addId = pbe.addition.getRegistryId().toString();
+        } else if (pbe.character != null && pbe.character.selectedAddition_19 != null) {
+          addId = pbe.character.selectedAddition_19.toString();
+        }
+        if (addId != null) {
+          final List<AdditionButtonType> custom = CustomAdditionsStorage.getCustomButtons(addId);
+          if (custom != null && !custom.isEmpty()) {
+            final AdditionButtonType fallbackBtn = custom.get(custom.size() - 1);
+            for (int i = 0; i < this.count_30; i++) {
+              if (i < custom.size()) {
+                this.hitButtonTypes[i] = custom.get(i);
+              } else {
+                this.hitButtonTypes[i] = fallbackBtn;
               }
-              LOGGER.info("AdvancedAdditionOverlaysEffect: Applied custom addition buttons for %s: %s", addId, Arrays.toString(this.hitButtonTypes));
-              return true;
             }
+            LOGGER.info("AdvancedAdditionOverlaysEffect: Applied custom addition buttons for %s: %s", addId, Arrays.toString(this.hitButtonTypes));
+            return true;
           }
         }
       }
@@ -146,9 +163,11 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
     if (this.count_30 > 0) {
       if (this.autoCompleteType_3a == 1 || TasmanBattleTutorial.isCounterTutorialActive()) {
         Arrays.fill(this.hitButtonTypes, AdditionButtonType.CROSS);
-      } else if (TvvlrMultimod.getAdditionMode() == AdditionMode.CUSTOM && this.applyCustomHitButtons()) {
-        // Custom mapped buttons successfully applied!
-      } else {
+      } else if (TvvlrMultimod.getAdditionMode() == AdditionMode.CUSTOM) {
+        if (!this.applyCustomHitButtons()) {
+          Arrays.fill(this.hitButtonTypes, AdditionButtonType.CROSS);
+        }
+      } else if (TvvlrMultimod.getAdditionMode() == AdditionMode.RANDOM) {
         // Rule: Hit 0 is always Cross (X)
         this.hitButtonTypes[0] = AdditionButtonType.CROSS;
 
@@ -168,6 +187,9 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
               break;
           }
         }
+      } else {
+        // DEFAULT mode: all Cross
+        Arrays.fill(this.hitButtonTypes, AdditionButtonType.CROSS);
       }
     }
 

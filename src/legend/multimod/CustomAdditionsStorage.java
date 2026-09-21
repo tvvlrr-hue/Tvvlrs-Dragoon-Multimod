@@ -51,38 +51,38 @@ public class CustomAdditionsStorage {
     // Dart
     final List<AdditionDefinition> dart = new ArrayList<>();
     dart.add(new AdditionDefinition("lod:double_slash", "Double Slash", 1));
-    dart.add(new AdditionDefinition("lod:volcano", "Volcano", 2));
+    dart.add(new AdditionDefinition("lod:volcano", "Volcano", 3));
     dart.add(new AdditionDefinition("lod:burning_rush", "Burning Rush", 2));
-    dart.add(new AdditionDefinition("lod:crush_dance", "Crush Dance", 3));
-    dart.add(new AdditionDefinition("lod:madness_hero", "Madness Hero", 4));
-    dart.add(new AdditionDefinition("lod:moon_strike", "Moon Strike", 5));
-    dart.add(new AdditionDefinition("lod:blazing_dynamo", "Blazing Dynamo", 6));
+    dart.add(new AdditionDefinition("lod:crush_dance", "Crush Dance", 4));
+    dart.add(new AdditionDefinition("lod:madness_hero", "Madness Hero", 5));
+    dart.add(new AdditionDefinition("lod:moon_strike", "Moon Strike", 6));
+    dart.add(new AdditionDefinition("lod:blazing_dynamo", "Blazing Dynamo", 7));
     CHARACTERS.add(new CharacterCategory("Dart", dart));
 
     // Lavitz
     final List<AdditionDefinition> lavitz = new ArrayList<>();
     lavitz.add(new AdditionDefinition("lod:harpoon", "Harpoon", 1));
     lavitz.add(new AdditionDefinition("lod:spinning_cane", "Spinning Cane", 2));
-    lavitz.add(new AdditionDefinition("lod:rod_typhoon", "Rod Typhoon", 3));
-    lavitz.add(new AdditionDefinition("lod:gust_of_wind_dance", "Gust of Wind Dance", 4));
-    lavitz.add(new AdditionDefinition("lod:flower_storm", "Flower Storm", 5));
+    lavitz.add(new AdditionDefinition("lod:rod_typhoon", "Rod Typhoon", 4));
+    lavitz.add(new AdditionDefinition("lod:gust_of_wind_dance", "Gust of Wind Dance", 6));
+    lavitz.add(new AdditionDefinition("lod:flower_storm", "Flower Storm", 7));
     CHARACTERS.add(new CharacterCategory("Lavitz", lavitz));
 
     // Albert
     final List<AdditionDefinition> albert = new ArrayList<>();
     albert.add(new AdditionDefinition("lod:albert_harpoon", "Harpoon", 1));
     albert.add(new AdditionDefinition("lod:albert_spinning_cane", "Spinning Cane", 2));
-    albert.add(new AdditionDefinition("lod:albert_rod_typhoon", "Rod Typhoon", 3));
-    albert.add(new AdditionDefinition("lod:albert_gust_of_wind_dance", "Gust of Wind Dance", 4));
-    albert.add(new AdditionDefinition("lod:albert_flower_storm", "Flower Storm", 5));
+    albert.add(new AdditionDefinition("lod:albert_rod_typhoon", "Rod Typhoon", 4));
+    albert.add(new AdditionDefinition("lod:albert_gust_of_wind_dance", "Gust of Wind Dance", 6));
+    albert.add(new AdditionDefinition("lod:albert_flower_storm", "Flower Storm", 7));
     CHARACTERS.add(new CharacterCategory("Albert", albert));
 
     // Rose
     final List<AdditionDefinition> rose = new ArrayList<>();
     rose.add(new AdditionDefinition("lod:whip_smack", "Whip Smack", 1));
     rose.add(new AdditionDefinition("lod:more_more", "More & More", 2));
-    rose.add(new AdditionDefinition("lod:hard_blade", "Hard Blade", 4));
-    rose.add(new AdditionDefinition("lod:demons_dance", "Demon's Dance", 6));
+    rose.add(new AdditionDefinition("lod:hard_blade", "Hard Blade", 5));
+    rose.add(new AdditionDefinition("lod:demons_dance", "Demon's Dance", 7));
     CHARACTERS.add(new CharacterCategory("Rose", rose));
 
     // Haschel
@@ -91,29 +91,44 @@ public class CustomAdditionsStorage {
     haschel.add(new AdditionDefinition("lod:ferry_of_styx", "Flurry of Styx", 2));
     haschel.add(new AdditionDefinition("lod:summon_4_gods", "Summon 4 Gods", 3));
     haschel.add(new AdditionDefinition("lod:five_ring_shattering", "5 Ring Shattering", 4));
-    haschel.add(new AdditionDefinition("lod:hex_hammer", "Hex Hammer", 5));
-    haschel.add(new AdditionDefinition("lod:omni_sweep", "Omni Sweep", 6));
+    haschel.add(new AdditionDefinition("lod:hex_hammer", "Hex Hammer", 6));
+    haschel.add(new AdditionDefinition("lod:omni_sweep", "Omni Sweep", 7));
     CHARACTERS.add(new CharacterCategory("Haschel", haschel));
 
     // Meru
     final List<AdditionDefinition> meru = new ArrayList<>();
     meru.add(new AdditionDefinition("lod:double_smack", "Double Smack", 1));
-    meru.add(new AdditionDefinition("lod:hammer_spin", "Hammer Spin", 2));
-    meru.add(new AdditionDefinition("lod:cool_boogie", "Cool Boogie", 3));
-    meru.add(new AdditionDefinition("lod:cats_cradle", "Cat's Cradle", 4));
-    meru.add(new AdditionDefinition("lod:perky_step", "Perky Step", 6));
+    meru.add(new AdditionDefinition("lod:hammer_spin", "Hammer Spin", 3));
+    meru.add(new AdditionDefinition("lod:cool_boogie", "Cool Boogie", 4));
+    meru.add(new AdditionDefinition("lod:cats_cradle", "Cat's Cradle", 6));
+    meru.add(new AdditionDefinition("lod:perky_step", "Perky Step", 7));
     CHARACTERS.add(new CharacterCategory("Meru", meru));
 
     // Kongol
     final List<AdditionDefinition> kongol = new ArrayList<>();
     kongol.add(new AdditionDefinition("lod:pursuit", "Pursuit", 1));
-    kongol.add(new AdditionDefinition("lod:inferno", "Inferno", 2));
-    kongol.add(new AdditionDefinition("lod:bone_crush", "Bone Crush", 4));
+    kongol.add(new AdditionDefinition("lod:inferno", "Inferno", 3));
+    kongol.add(new AdditionDefinition("lod:bone_crush", "Bone Crush", 5));
     CHARACTERS.add(new CharacterCategory("Kongol", kongol));
 
     // Initialize defaults
     initDefaults();
     load();
+  }
+
+  public static AdditionDefinition getDefinition(final String additionId) {
+    if (additionId == null) {
+      return null;
+    }
+    final String cleanId = additionId.startsWith("lod:") ? additionId : "lod:" + additionId;
+    for (final CharacterCategory category : CHARACTERS) {
+      for (final AdditionDefinition def : category.additions) {
+        if (def.id.equalsIgnoreCase(cleanId) || def.id.equalsIgnoreCase(additionId)) {
+          return def;
+        }
+      }
+    }
+    return null;
   }
 
   private static void initDefaults() {
@@ -139,7 +154,18 @@ public class CustomAdditionsStorage {
     if (buttons == null && additionId.startsWith("lod:")) {
       buttons = CUSTOM_MAPPINGS.get(additionId.substring(4));
     }
-    return buttons != null ? new ArrayList<>(buttons) : null;
+    if (buttons == null) {
+      return null;
+    }
+    final List<AdditionButtonType> result = new ArrayList<>(buttons);
+    final AdditionDefinition def = getDefinition(additionId);
+    if (def != null && !result.isEmpty()) {
+      final AdditionButtonType last = result.get(result.size() - 1);
+      while (result.size() < def.hitCount) {
+        result.add(last);
+      }
+    }
+    return result;
   }
 
   public static synchronized void setCustomButtons(final String additionId, final List<AdditionButtonType> buttons) {
@@ -158,10 +184,11 @@ public class CustomAdditionsStorage {
       final Type mapType = new TypeToken<Map<String, List<String>>>() {}.getType();
       final Map<String, List<String>> raw = GSON.fromJson(reader, mapType);
       if (raw != null) {
+        boolean needsResave = false;
         for (final Map.Entry<String, List<String>> entry : raw.entrySet()) {
           final String addId = entry.getKey();
           final List<String> list = entry.getValue();
-          if (list != null) {
+          if (list != null && !list.isEmpty()) {
             final List<AdditionButtonType> btnList = new ArrayList<>();
             for (final String s : list) {
               try {
@@ -170,10 +197,28 @@ public class CustomAdditionsStorage {
                 btnList.add(AdditionButtonType.CROSS);
               }
             }
+            final AdditionDefinition def = getDefinition(addId);
+            if (def != null) {
+              final AdditionButtonType fillType = btnList.get(btnList.size() - 1);
+              if (btnList.size() < def.hitCount) {
+                needsResave = true;
+                while (btnList.size() < def.hitCount) {
+                  btnList.add(fillType);
+                }
+              } else if (btnList.size() > def.hitCount) {
+                needsResave = true;
+                while (btnList.size() > def.hitCount) {
+                  btnList.remove(btnList.size() - 1);
+                }
+              }
+            }
             CUSTOM_MAPPINGS.put(addId, btnList);
           }
         }
         LOGGER.info("CustomAdditionsStorage: Successfully loaded %d custom addition mappings from %s", raw.size(), STORAGE_FILE);
+        if (needsResave) {
+          save();
+        }
       }
     } catch (final Throwable t) {
       LOGGER.warn("CustomAdditionsStorage: Failed loading from %s", STORAGE_FILE, t);
