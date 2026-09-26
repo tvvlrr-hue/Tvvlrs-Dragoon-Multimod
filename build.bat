@@ -14,11 +14,10 @@ if exist "bin" rmdir /S /Q "bin"
 mkdir "bin"
 
 set LOD_JAR=
-for %%F in (..\..\lod-game-*.jar) do (
-    echo %%F | findstr /i "sources" >nul
-    if errorlevel 1 set LOD_JAR=%%F
+for /f "delims=" %%F in ('dir /b /a-d "..\..\lod-game-*.jar" 2^>nul ^| findstr /v /i "sources"') do (
+    set LOD_JAR=..\..\%%F
 )
-if "%LOD_JAR%"=="" set LOD_JAR=..\..\lod-game-d3d4c02cbf1c74a4db39cfc10520431a6b8cc150.jar
+if "!LOD_JAR!"=="" set LOD_JAR=..\..\lod-game-3a840708987eef4f1d8005854349cb4373fff832.jar
 
 echo Compiling Java sources with !LOD_JAR!...
 "%JDK_PATH%\javac.exe" -cp "!LOD_JAR!;..\..\libs/*" -d "bin" src\legend\multimod\*.java

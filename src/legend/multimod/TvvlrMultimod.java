@@ -64,7 +64,6 @@ import static legend.core.GameEngine.REGISTRIES;
 import static legend.core.GameEngine.SCRIPTS;
 import static legend.game.FullScreenEffects.startFadeEffect;
 import static legend.game.Models.loadModelStandardAnimation;
-import static legend.game.Scus94491BpeSegment_8004.engineStateFunctions_8004e29c;
 import static legend.game.Scus94491BpeSegment_8006.battleState_8006e398;
 import static legend.game.Scus94491BpeSegment_800b.postBattleAction_800bc974;
 import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_BACK;
@@ -478,13 +477,11 @@ public class TvvlrMultimod {
       TasmanNpcManager.cleanupNpc(null);
     }
     if (event.engineState instanceof Battle) {
-      if (engineStateFunctions_8004e29c != null) {
-        if (isAdvancedAdditionsEnabled()) {
-          engineStateFunctions_8004e29c[753] = AdvancedAdditionOverlaysEffect.ALLOCATOR;
-          LOGGER.info("TvvlrMultimod: Hooked script opcode 753 on EngineStateChange.");
-        } else {
-          engineStateFunctions_8004e29c[753] = SEffe::scriptAllocateAdditionOverlaysEffect;
-        }
+      if (isAdvancedAdditionsEnabled()) {
+        ScriptHookUtil.hookEngineStateFunction(753, AdvancedAdditionOverlaysEffect.ALLOCATOR);
+        LOGGER.info("TvvlrMultimod: Hooked script opcode 753 on EngineStateChange.");
+      } else {
+        ScriptHookUtil.hookEngineStateFunction(753, SEffe::scriptAllocateAdditionOverlaysEffect);
       }
     }
   }
@@ -522,6 +519,7 @@ public class TvvlrMultimod {
   public void onTurnStarted(final BattleEntityTurnEvent<?> event) {
     if (isAdvancedAdditionsEnabled()) {
       TasmanBattleTutorial.onTurnStarted(event);
+      RandomAdditionsManager.onTurnStarted(event);
     }
   }
 
@@ -560,14 +558,11 @@ public class TvvlrMultimod {
 
     // 3. Advanced Additions Render
     if (isAdvancedAdditionsEnabled()) {
-      RandomAdditionsManager.checkMenuLock();
+      RandomAdditionsManager.onRender();
       TasmanBattleTutorial.onRender(event);
 
       if (EngineStates.currentEngineState_8004dd04 instanceof Battle) {
-        if (engineStateFunctions_8004e29c != null && engineStateFunctions_8004e29c[753] != AdvancedAdditionOverlaysEffect.ALLOCATOR) {
-          engineStateFunctions_8004e29c[753] = AdvancedAdditionOverlaysEffect.ALLOCATOR;
-          LOGGER.info("TvvlrMultimod: Hooked script opcode 753 on Render.");
-        }
+        ScriptHookUtil.hookEngineStateFunction(753, AdvancedAdditionOverlaysEffect.ALLOCATOR);
       }
 
       if (SEffe.additionOverlayActive_80119f41 != 0 && SCRIPTS != null) {

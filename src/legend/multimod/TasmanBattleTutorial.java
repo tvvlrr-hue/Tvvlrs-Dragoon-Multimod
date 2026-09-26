@@ -33,7 +33,6 @@ import java.util.Map;
 import java.util.function.Function;
 
 import static legend.core.GameEngine.REGISTRIES;
-import static legend.game.Scus94491BpeSegment_8004.scriptSubFunctions_8004e29c;
 import static legend.game.Scus94491BpeSegment_8006.battleState_8006e398;
 import static legend.game.Scus94491BpeSegment_800b.gameState_800babc8;
 import static legend.game.Text.textboxText_800bdf38;
@@ -158,22 +157,13 @@ public class TasmanBattleTutorial {
     if (initialized) {
       return;
     }
-    if (scriptSubFunctions_8004e29c != null) {
-      originalAddTextbox = scriptSubFunctions_8004e29c[200];
-      scriptSubFunctions_8004e29c[200] = TasmanBattleTutorial::hookAddTextbox;
+    ScriptHookUtil.hookScriptSubFunction(200, TasmanBattleTutorial::hookAddTextbox, orig -> originalAddTextbox = orig);
+    ScriptHookUtil.hookScriptSubFunction(205, TasmanBattleTutorial::hookGetSelectionIndex, orig -> originalGetSelectionIndex = orig);
+    ScriptHookUtil.hookScriptSubFunction(207, TasmanBattleTutorial::hookAddSelectionTextbox, orig -> originalAddSelectionTextbox = orig);
+    ScriptHookUtil.hookScriptSubFunction(195, TasmanBattleTutorial::hookIsTextboxInitialized, orig -> originalIsTextboxInitialized = orig);
 
-      originalGetSelectionIndex = scriptSubFunctions_8004e29c[205];
-      scriptSubFunctions_8004e29c[205] = TasmanBattleTutorial::hookGetSelectionIndex;
-
-      originalAddSelectionTextbox = scriptSubFunctions_8004e29c[207];
-      scriptSubFunctions_8004e29c[207] = TasmanBattleTutorial::hookAddSelectionTextbox;
-
-      originalIsTextboxInitialized = scriptSubFunctions_8004e29c[195];
-      scriptSubFunctions_8004e29c[195] = TasmanBattleTutorial::hookIsTextboxInitialized;
-
-      initialized = true;
-      LOGGER.info("TasmanBattleTutorial: Successfully initialized script opcode hooks.");
-    }
+    initialized = true;
+    LOGGER.info("TasmanBattleTutorial: Successfully initialized script opcode hooks.");
   }
 
   public static void onBattleStarted(final BattleStartedEvent event) {

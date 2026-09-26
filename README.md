@@ -13,7 +13,7 @@ Accessible directly from Severed Chains' in-game Options menu (**Options -> Tvvl
     - **Enabled**: Toggle multi-button additions on or off.
     - **Mode**: Cycle between `DEFAULT`, `RANDOM`, and `CUSTOM`.
     - **Configure Additions**: Appears when `CUSTOM` mode is active, opening the 3D addition configuration suite.
-    - **Random Additions**: When enabled, each battle randomly selects an addition from each character's unlocked additions.
+    - **Random Additions**: When enabled, each attack randomly selects an addition from each character's unlocked additions.
     - **Controller Colors**: Select controller button theme colors (`AUTO`, `PLAYSTATION`, `XBOX`, `SWITCH`).
   - **`[ RACING MINIGAME ]`**
     - **Enabled**: Toggle the Lohan racing attraction on or off.
@@ -45,8 +45,9 @@ Accessible directly from Severed Chains' in-game Options menu (**Options -> Tvvl
 ---
 
 ### 3. Random Additions Mode
-- Automatically equips a random addition for each party member at the start of battle from their pool of unlocked additions.
-- **Non-Destructive In-Combat Overrides**: Switching additions in-combat via the combat menu temporarily overrides the addition for that battle only, preserving your normal equipped additions outside of battle.
+- Automatically rolls and equips a random addition for each party member on every attack from their pool of unlocked additions.
+- **In-Combat Addition Swapping**: Switching an addition during battle via the in-combat menu overrules random additions for that character for the remainder of the battle (allowing you to focus-level specific additions). Characters not manually changed continue to receive random additions per attack.
+- **Non-Destructive State Restoration**: Once battle ends, all characters' additions revert back to their pre-battle equipped selections.
 
 ---
 
