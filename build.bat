@@ -13,8 +13,15 @@ if not exist "%JDK_PATH%\javac.exe" (
 if exist "bin" rmdir /S /Q "bin"
 mkdir "bin"
 
-echo Compiling Java sources...
-"%JDK_PATH%\javac.exe" -cp "..\..\lod-game-b2a49e4df549b1941b1c5af45d0d150f27c2dc4e.jar;..\..\libs/*" -d "bin" src\legend\multimod\*.java
+set LOD_JAR=
+for %%F in (..\..\lod-game-*.jar) do (
+    echo %%F | findstr /i "sources" >nul
+    if errorlevel 1 set LOD_JAR=%%F
+)
+if "%LOD_JAR%"=="" set LOD_JAR=..\..\lod-game-d3d4c02cbf1c74a4db39cfc10520431a6b8cc150.jar
+
+echo Compiling Java sources with !LOD_JAR!...
+"%JDK_PATH%\javac.exe" -cp "!LOD_JAR!;..\..\libs/*" -d "bin" src\legend\multimod\*.java
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Compilation failed!
     exit /b %ERRORLEVEL%

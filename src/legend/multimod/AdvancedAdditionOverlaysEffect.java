@@ -60,8 +60,11 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
 
   public AdvancedAdditionOverlaysEffect(final int attackerScriptIndex, final int targetScriptIndex, final int autoCompleteType) {
     super(attackerScriptIndex, targetScriptIndex, autoCompleteType);
-    if (this.autoCompleteType_3a == 1 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
-      this.configureTutorialShowcase();
+    if (this.autoCompleteType_3a != 0 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
+      this.count_30 = 0;
+      this.additionComplete_32 = 1;
+      this.pauseTickerAndRenderer_31 = 1;
+      this.hitOverlays_40 = new AdditionOverlaysHit20[0];
     } else {
       this.initHitButtonTypes();
     }
@@ -72,6 +75,13 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
    */
   public AdvancedAdditionOverlaysEffect(final AdditionOverlaysEffect44 vanilla, final ScriptState<?> state) {
     super(vanilla.attackerScriptIndex_00, vanilla.targetScriptIndex_04, vanilla.autoCompleteType_3a);
+    if (this.autoCompleteType_3a != 0 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
+      this.count_30 = 0;
+      this.additionComplete_32 = 1;
+      this.pauseTickerAndRenderer_31 = 1;
+      this.hitOverlays_40 = new AdditionOverlaysHit20[0];
+      return;
+    }
     final byte[] savedState = additionHitCompletionState_8011a014 != null ? additionHitCompletionState_8011a014.clone() : null;
     this.count_30 = vanilla.count_30;
     this.pauseTickerAndRenderer_31 = vanilla.pauseTickerAndRenderer_31;
@@ -84,14 +94,31 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
     if (savedState != null) {
       additionHitCompletionState_8011a014 = savedState;
     }
-    if (this.autoCompleteType_3a == 1 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
-      this.configureTutorialShowcase();
-    } else {
-      this.initHitButtonTypes();
-    }
+    this.initHitButtonTypes();
   }
 
   public static FlowControl scriptAllocate(final RunningScript<? extends BattleObject> script) {
+    final int autoCompleteType = script.params_20[2].get();
+    if (autoCompleteType != 0 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
+      LOGGER.info("AdvancedAdditionOverlaysEffect: Suppressed tutorial demonstration overlay during dialogue.");
+      final AdvancedAdditionOverlaysEffect dummy = new AdvancedAdditionOverlaysEffect(
+        script.params_20[0].get(),
+        script.params_20[1].get(),
+        autoCompleteType
+      );
+      dummy.count_30 = 0;
+      dummy.additionComplete_32 = 1;
+      dummy.pauseTickerAndRenderer_31 = 1;
+      dummy.hitOverlays_40 = new AdditionOverlaysHit20[0];
+      final ScriptState<EffectManagerData6c<EffectManagerParams.VoidType>> state = allocateEffectManager(
+        "Addition overlays",
+        script.scriptState_04,
+        dummy
+      );
+      state.setStor(8, 0);
+      script.params_20[4].set(state.index);
+      return FlowControl.CONTINUE;
+    }
     final AdvancedAdditionOverlaysEffect effect = new AdvancedAdditionOverlaysEffect(
       script.params_20[0].get(),
       script.params_20[1].get(),
@@ -339,6 +366,11 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
 
   @Override
   public void tick(final ScriptState<EffectManagerData6c<EffectManagerParams.VoidType>> state) {
+    if (this.autoCompleteType_3a != 0 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
+      state.deallocateWithChildren();
+      SEffe.additionOverlayActive_80119f41 = 0;
+      return;
+    }
     final EffectManagerData6c<EffectManagerParams.VoidType> manager = state.innerStruct_00;
 
     if (this.pauseTickerAndRenderer_31 == 0) {
@@ -564,6 +596,9 @@ public class AdvancedAdditionOverlaysEffect extends AdditionOverlaysEffect44 {
 
   @Override
   public void render(final ScriptState<EffectManagerData6c<EffectManagerParams.VoidType>> state) {
+    if (this.autoCompleteType_3a != 0 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
+      return;
+    }
     final EffectManagerData6c<EffectManagerParams.VoidType> manager = state.innerStruct_00;
 
     if (this.pauseTickerAndRenderer_31 != 1) {

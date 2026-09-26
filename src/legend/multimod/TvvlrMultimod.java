@@ -21,6 +21,7 @@ import legend.game.inventory.screens.controls.Button;
 import legend.game.modding.coremod.CoreMod;
 import legend.game.modding.events.RenderEvent;
 import legend.game.modding.events.battle.BattleEndedEvent;
+import legend.game.modding.events.battle.BattleEntityTurnEvent;
 import legend.game.modding.events.battle.BattleStartedEvent;
 import legend.game.modding.events.engine.EngineStateChangeEvent;
 import legend.game.modding.events.input.RegisterDefaultInputBindingsEvent;
@@ -34,6 +35,7 @@ import legend.game.saves.ConfigStorageLocation;
 import legend.game.saves.EnumConfigEntry;
 import legend.game.scripting.ScriptState;
 import legend.game.submap.RetailSubmap;
+import legend.game.submap.SMap;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.legendofdragoon.modloader.Mod;
@@ -48,12 +50,29 @@ import java.util.Deque;
 import java.util.Set;
 import java.util.WeakHashMap;
 
+import legend.game.combat.bent.BattleEntity27c;
+import legend.game.combat.bent.PlayerBattleEntity;
+import legend.game.combat.postbattleactions.VictoryPostBattleAction;
+import legend.game.combat.postbattleactions.VictoryPostBattleActionInstance;
+import legend.game.combat.types.CombatantAsset0c;
+import legend.game.types.TmdAnimationFile;
+
 import static legend.core.GameEngine.CONFIG;
 import static legend.core.GameEngine.EVENTS;
+import static legend.core.GameEngine.PLATFORM;
 import static legend.core.GameEngine.REGISTRIES;
 import static legend.core.GameEngine.SCRIPTS;
 import static legend.game.FullScreenEffects.startFadeEffect;
+import static legend.game.Models.loadModelStandardAnimation;
 import static legend.game.Scus94491BpeSegment_8004.engineStateFunctions_8004e29c;
+import static legend.game.Scus94491BpeSegment_8006.battleState_8006e398;
+import static legend.game.Scus94491BpeSegment_800b.postBattleAction_800bc974;
+import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_BACK;
+import static legend.game.modding.coremod.CoreMod.INPUT_ACTION_MENU_CONFIRM;
+import static legend.lodmod.LodMod.INPUT_ACTION_BTTL_ATTACK;
+
+import legend.game.modding.events.submap.SubmapEncounterEvent;
+import legend.game.modding.events.submap.SubmapWarpEvent;
 
 @Mod(id = TvvlrMultimod.MOD_ID, version = "^3.0.0")
 public class TvvlrMultimod {
@@ -78,6 +97,10 @@ public class TvvlrMultimod {
     CONFIG_REGISTRAR.register("advanced_additions_enabled",
       () -> new BoolConfigEntry(true, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
 
+  public static final RegistryDelegate<BoolConfigEntry> RANDOM_ADDITIONS_ENABLED =
+    CONFIG_REGISTRAR.register("random_additions_enabled",
+      () -> new BoolConfigEntry(false, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
+
   public static final RegistryDelegate<BoolConfigEntry> RACING_MINIGAME_ENABLED =
     CONFIG_REGISTRAR.register("racing_minigame_enabled",
       () -> new BoolConfigEntry(true, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
@@ -94,12 +117,34 @@ public class TvvlrMultimod {
     CONFIG_REGISTRAR.register("addition_mode",
       () -> new EnumConfigEntry<>(AdditionMode.class, AdditionMode.DEFAULT, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY));
 
+  public static final RegistryDelegate<BoolConfigEntry> DANCE_MODIFIER_ENABLED =
+    CONFIG_REGISTRAR.register("dance_modifier_enabled",
+      () -> new BoolConfigEntry(true, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
+
+  public static final RegistryDelegate<BoolConfigEntry> TASMAN_PRACTICE_ENABLED =
+    CONFIG_REGISTRAR.register("tasman_practice_enabled",
+      () -> new BoolConfigEntry(true, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
+
+  public static final RegistryDelegate<BoolConfigEntry> FAST_TRAVEL_ENABLED =
+    CONFIG_REGISTRAR.register("fast_travel_enabled",
+      () -> new BoolConfigEntry(true, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
+
+  public static final RegistryDelegate<BoolConfigEntry> FAST_TRAVEL_UNLOCK_ALL =
+    CONFIG_REGISTRAR.register("fast_travel_unlock_all",
+      () -> new BoolConfigEntry(false, ConfigStorageLocation.GLOBAL, ConfigCategory.GAMEPLAY, false));
+
   // Fallback values if config is unavailable
   private static boolean advancedAdditionsEnabledFallback = true;
+  private static boolean randomAdditionsEnabledFallback = false;
   private static boolean racingMinigameEnabledFallback = true;
   private static boolean freeRaceEntryFallback = false;
+  private static boolean danceModifierEnabledFallback = true;
+  private static boolean tasmanPracticeEnabledFallback = true;
+  private static boolean fastTravelEnabledFallback = true;
+  private static boolean fastTravelUnlockAllFallback = false;
   private static ControllerTheme controllerThemeFallback = ControllerTheme.AUTO;
   private static AdditionMode additionModeFallback = AdditionMode.DEFAULT;
+  private static boolean victoryDancesApplied = false;
 
   // Active battle tracking
   public static Battle currentBattle = null;
@@ -112,7 +157,9 @@ public class TvvlrMultimod {
   public TvvlrMultimod() {
     EVENTS.register(this);
     TasmanBattleTutorial.init();
+    TasmanPracticeBattle.initScriptHooks();
     CustomAdditionsStorage.load();
+    DanceModifierStorage.load();
     LOGGER.info("TvvlrMultimod: Initialized and registered with EVENTS.");
   }
 
@@ -139,6 +186,105 @@ public class TvvlrMultimod {
       LOGGER.info("TvvlrMultimod: Advanced Additions set to %b", enabled);
     } catch (final Throwable t) {
       LOGGER.warn("TvvlrMultimod: Error setting advanced additions enabled", t);
+    }
+  }
+
+  public static boolean isRandomAdditionsEnabled() {
+    try {
+      if (CONFIG != null && RANDOM_ADDITIONS_ENABLED != null && RANDOM_ADDITIONS_ENABLED.isValid()) {
+        return CONFIG.getConfig(RANDOM_ADDITIONS_ENABLED.get());
+      }
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error checking if random additions enabled", t);
+    }
+    return randomAdditionsEnabledFallback;
+  }
+
+  public static void setRandomAdditionsEnabled(final boolean enabled) {
+    randomAdditionsEnabledFallback = enabled;
+    try {
+      if (CONFIG != null && RANDOM_ADDITIONS_ENABLED != null && RANDOM_ADDITIONS_ENABLED.isValid()) {
+        CONFIG.setConfig(RANDOM_ADDITIONS_ENABLED.get(), enabled);
+      }
+      persistConfig();
+      LOGGER.info("TvvlrMultimod: Random Additions set to %b", enabled);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error setting random additions enabled", t);
+    }
+  }
+
+  public static boolean isTasmanPracticeEnabled() {
+    try {
+      if (CONFIG != null && TASMAN_PRACTICE_ENABLED != null && TASMAN_PRACTICE_ENABLED.isValid()) {
+        return CONFIG.getConfig(TASMAN_PRACTICE_ENABLED.get());
+      }
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error checking if tasman practice enabled", t);
+    }
+    return tasmanPracticeEnabledFallback;
+  }
+
+  public static void setTasmanPracticeEnabled(final boolean enabled) {
+    tasmanPracticeEnabledFallback = enabled;
+    try {
+      if (CONFIG != null && TASMAN_PRACTICE_ENABLED != null && TASMAN_PRACTICE_ENABLED.isValid()) {
+        CONFIG.setConfig(TASMAN_PRACTICE_ENABLED.get(), enabled);
+      }
+      if (!enabled) {
+        TasmanNpcManager.cleanupNpc(EngineStates.currentEngineState_8004dd04 instanceof SMap smap ? smap : null);
+      }
+      persistConfig();
+      LOGGER.info("TvvlrMultimod: Master Tasman Practice set to %b", enabled);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error setting tasman practice enabled", t);
+    }
+  }
+
+  public static boolean isFastTravelEnabled() {
+    try {
+      if (CONFIG != null && FAST_TRAVEL_ENABLED != null && FAST_TRAVEL_ENABLED.isValid()) {
+        return CONFIG.getConfig(FAST_TRAVEL_ENABLED.get());
+      }
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error checking if fast travel enabled", t);
+    }
+    return fastTravelEnabledFallback;
+  }
+
+  public static void setFastTravelEnabled(final boolean enabled) {
+    fastTravelEnabledFallback = enabled;
+    try {
+      if (CONFIG != null && FAST_TRAVEL_ENABLED != null && FAST_TRAVEL_ENABLED.isValid()) {
+        CONFIG.setConfig(FAST_TRAVEL_ENABLED.get(), enabled);
+      }
+      persistConfig();
+      LOGGER.info("TvvlrMultimod: Fast Travel set to %b", enabled);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error setting fast travel enabled", t);
+    }
+  }
+
+  public static boolean isFastTravelUnlockAll() {
+    try {
+      if (CONFIG != null && FAST_TRAVEL_UNLOCK_ALL != null && FAST_TRAVEL_UNLOCK_ALL.isValid()) {
+        return CONFIG.getConfig(FAST_TRAVEL_UNLOCK_ALL.get());
+      }
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error checking if fast travel unlock all enabled", t);
+    }
+    return fastTravelUnlockAllFallback;
+  }
+
+  public static void setFastTravelUnlockAll(final boolean enabled) {
+    fastTravelUnlockAllFallback = enabled;
+    try {
+      if (CONFIG != null && FAST_TRAVEL_UNLOCK_ALL != null && FAST_TRAVEL_UNLOCK_ALL.isValid()) {
+        CONFIG.setConfig(FAST_TRAVEL_UNLOCK_ALL.get(), enabled);
+      }
+      persistConfig();
+      LOGGER.info("TvvlrMultimod: Fast Travel Unlock All set to %b", enabled);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error setting fast travel unlock all", t);
     }
   }
 
@@ -187,6 +333,30 @@ public class TvvlrMultimod {
       LOGGER.info("TvvlrMultimod: Free race entry set to %b", enabled);
     } catch (final Throwable t) {
       LOGGER.warn("TvvlrMultimod: Error setting free race entry", t);
+    }
+  }
+
+  public static boolean isDanceModifierEnabled() {
+    try {
+      if (CONFIG != null && DANCE_MODIFIER_ENABLED != null && DANCE_MODIFIER_ENABLED.isValid()) {
+        return CONFIG.getConfig(DANCE_MODIFIER_ENABLED.get());
+      }
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error checking if dance modifier enabled", t);
+    }
+    return danceModifierEnabledFallback;
+  }
+
+  public static void setDanceModifierEnabled(final boolean enabled) {
+    danceModifierEnabledFallback = enabled;
+    try {
+      if (CONFIG != null && DANCE_MODIFIER_ENABLED != null && DANCE_MODIFIER_ENABLED.isValid()) {
+        CONFIG.setConfig(DANCE_MODIFIER_ENABLED.get(), enabled);
+      }
+      persistConfig();
+      LOGGER.info("TvvlrMultimod: Dance Modifier set to %b", enabled);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Error setting dance modifier enabled", t);
     }
   }
 
@@ -304,6 +474,9 @@ public class TvvlrMultimod {
 
   @EventListener
   public void onEngineStateChange(final EngineStateChangeEvent event) {
+    if (isTasmanPracticeEnabled()) {
+      TasmanNpcManager.cleanupNpc(null);
+    }
     if (event.engineState instanceof Battle) {
       if (engineStateFunctions_8004e29c != null) {
         if (isAdvancedAdditionsEnabled()) {
@@ -319,25 +492,61 @@ public class TvvlrMultimod {
   @EventListener
   public void onBattleStarted(final BattleStartedEvent event) {
     currentBattle = event.battle;
+    victoryDancesApplied = false;
+    if (isDanceModifierEnabled()) {
+      preInjectVictoryAnimations(event.battle);
+    }
     if (isAdvancedAdditionsEnabled()) {
       TasmanBattleTutorial.onBattleStarted(event);
+      RandomAdditionsManager.onBattleStarted(event);
+    }
+    if (isTasmanPracticeEnabled()) {
+      TasmanPracticeBattle.onBattleStarted(event);
     }
   }
 
   @EventListener
   public void onBattleEnded(final BattleEndedEvent event) {
     currentBattle = null;
+    victoryDancesApplied = false;
     if (isAdvancedAdditionsEnabled()) {
       TasmanBattleTutorial.onBattleEnded(event);
+      RandomAdditionsManager.onBattleEnded(event);
+    }
+    if (isTasmanPracticeEnabled()) {
+      TasmanPracticeBattle.onBattleEnded(event);
     }
   }
 
+  @EventListener
+  public void onTurnStarted(final BattleEntityTurnEvent<?> event) {
+    if (isAdvancedAdditionsEnabled()) {
+      TasmanBattleTutorial.onTurnStarted(event);
+    }
+  }
 
   @EventListener
   public void onSubmapLoad(final SubmapLoadEvent event) {
     if (isRacingMinigameEnabled() && event.getSubmap() instanceof RetailSubmap retail) {
       LohanRaceNpc.onSubmapLoad(event.getEngineState(), retail, event.submapObjects);
       LohanRaceManager.onSubmapLoad(event.getEngineState(), retail, event.submapObjects);
+    }
+    if (isTasmanPracticeEnabled() && event.getSubmap() instanceof RetailSubmap retail) {
+      TasmanNpcManager.onSubmapLoad(event.getEngineState(), retail, event.submapObjects);
+    }
+  }
+
+  @EventListener
+  public void onSubmapWarp(final SubmapWarpEvent event) {
+    if (isTasmanPracticeEnabled()) {
+      TasmanNpcManager.cleanupNpc(event.getEngineState());
+    }
+  }
+
+  @EventListener
+  public void onSubmapEncounter(final SubmapEncounterEvent event) {
+    if (isTasmanPracticeEnabled()) {
+      TasmanPracticeBattle.onSubmapEncounter(event);
     }
   }
 
@@ -346,8 +555,12 @@ public class TvvlrMultimod {
     // 1. Check and hook active OptionsCategoryScreen on SItem.menuStack
     checkOptionsMenuHook();
 
-    // 2. Advanced Additions Render
+    // 2. Fast Travel Hook & Warp Execution
+    FastTravelManager.onRender();
+
+    // 3. Advanced Additions Render
     if (isAdvancedAdditionsEnabled()) {
+      RandomAdditionsManager.checkMenuLock();
       TasmanBattleTutorial.onRender(event);
 
       if (EngineStates.currentEngineState_8004dd04 instanceof Battle) {
@@ -362,19 +575,177 @@ public class TvvlrMultimod {
         for (int i = 0; i < scriptCount; i++) {
           final ScriptState<?> state = SCRIPTS.getState(i);
           if (state != null && state.innerStruct_00 instanceof final EffectManagerData6c<?> manager) {
-            if (manager.effect_44 != null && manager.effect_44.getClass() == AdditionOverlaysEffect44.class) {
-              ((EffectManagerData6c) manager).effect_44 = new AdvancedAdditionOverlaysEffect((AdditionOverlaysEffect44) manager.effect_44, state);
-              LOGGER.info("TvvlrMultimod: Upgraded vanilla AdditionOverlaysEffect44 to AdvancedAdditionOverlaysEffect on script %d", i);
+            if (manager.effect_44 != null) {
+              if (manager.effect_44 instanceof AdditionOverlaysEffect44 overlay) {
+                if (overlay.autoCompleteType_3a != 0 && TasmanBattleTutorial.isAdvancedTutorialActive()) {
+                  state.deallocateWithChildren();
+                  SEffe.additionOverlayActive_80119f41 = 0;
+                  continue;
+                }
+              }
+              if (manager.effect_44.getClass() == AdditionOverlaysEffect44.class) {
+                final AdditionOverlaysEffect44 vanilla = (AdditionOverlaysEffect44) manager.effect_44;
+                ((EffectManagerData6c) manager).effect_44 = new AdvancedAdditionOverlaysEffect(vanilla, state);
+                LOGGER.info("TvvlrMultimod: Upgraded vanilla AdditionOverlaysEffect44 to AdvancedAdditionOverlaysEffect on script %d", i);
+              }
             }
           }
         }
       }
     }
 
-    // 3. Racing Minigame Render
+    // 4. Racing Minigame Render
     if (isRacingMinigameEnabled()) {
       LohanRaceNpc.onRender();
       LohanRaceManager.onRender();
+    }
+
+    // 5. Master Tasman Render
+    if (isTasmanPracticeEnabled()) {
+      TasmanNpcManager.onRender();
+      TasmanPracticeBattle.onRender(event);
+    }
+
+    // 6. Dance Modifier Combat Victory Hook
+    if (isDanceModifierEnabled() && EngineStates.currentEngineState_8004dd04 instanceof Battle battle) {
+      checkCombatVictoryDances(battle);
+    }
+  }
+
+  public static class ExtendedVictoryPostBattleActionInstance extends VictoryPostBattleActionInstance {
+    private final int defaultDuration;
+    private int elapsedFrames = 0;
+
+    public ExtendedVictoryPostBattleActionInstance(final VictoryPostBattleAction action, final int defaultDuration) {
+      super(action);
+      this.defaultDuration = defaultDuration;
+      this.elapsedFrames = 0;
+    }
+
+    @Override
+    public int getTotalDuration(final Battle battle) {
+      this.elapsedFrames++;
+      if (this.elapsedFrames >= 15) {
+        if (PLATFORM.isActionPressed(INPUT_ACTION_MENU_CONFIRM.get())
+            || PLATFORM.isActionPressed(INPUT_ACTION_MENU_BACK.get())
+            || (INPUT_ACTION_BTTL_ATTACK != null && INPUT_ACTION_BTTL_ATTACK.isValid() && PLATFORM.isActionPressed(INPUT_ACTION_BTTL_ATTACK.get()))) {
+          return 0; // Immediate skip on tap/confirm/back!
+        }
+      }
+      return this.defaultDuration;
+    }
+
+    @Override
+    public void onCameraFadeoutStart(final Battle battle) {
+      super.onCameraFadeoutStart(battle);
+      applyVictoryDances(battle);
+    }
+  }
+
+  private static void preInjectVictoryAnimations(final Battle battle) {
+    try {
+      if (battleState_8006e398 == null || battleState_8006e398.playerBents_e40 == null) {
+        return;
+      }
+      final int count = battleState_8006e398.getPlayerCount();
+      for (int i = 0; i < count; i++) {
+        final ScriptState<PlayerBattleEntity> state = battleState_8006e398.playerBents_e40.get(i);
+        if (state == null || state.innerStruct_00 == null) {
+          continue;
+        }
+        final PlayerBattleEntity playerBent = state.innerStruct_00;
+        final int charId = playerBent.charId_272;
+        final DanceType dance = DanceModifierStorage.getDanceByCharId(charId);
+        final TmdAnimationFile danceAnim = ProceduralDanceSynthesizer.getDanceAnimation(charId, dance != null ? dance : DanceType.DEFAULT);
+        if (danceAnim != null && playerBent.combatant_144 != null) {
+          final CombatantAsset0c.AnimType customAsset15 = new CombatantAsset0c.AnimType(danceAnim);
+          customAsset15.type_0a = 1;
+          customAsset15.isLoaded_0b = true;
+          customAsset15._09 = 1;
+          playerBent.combatant_144.assets_14[15] = customAsset15;
+
+          final CombatantAsset0c.AnimType customAsset31 = new CombatantAsset0c.AnimType(danceAnim);
+          customAsset31.type_0a = 1;
+          customAsset31.isLoaded_0b = true;
+          customAsset31._09 = 1;
+          playerBent.combatant_144.assets_14[31] = customAsset31;
+
+          playerBent.combatant_144.assets_14[10] = customAsset15;
+        }
+      }
+      LOGGER.info("TvvlrMultimod: Pre-injected victory animations into combatant asset slots 15 & 31 for %d players", count);
+    } catch (final Throwable t) {
+      LOGGER.warn("TvvlrMultimod: Failed to pre-inject victory animations", t);
+    }
+  }
+
+  private static void checkCombatVictoryDances(final Battle battle) {
+    if (postBattleAction_800bc974 == null || !(postBattleAction_800bc974.action instanceof VictoryPostBattleAction)) {
+      return;
+    }
+
+    // Wrap the victory action in an ExtendedVictoryPostBattleActionInstance so that:
+    // 1. postBattleAction_800bc974.action retains its original reference (CorePostBattleActions.VICTORY),
+    //    ensuring game variable 57 returns 1 (VICTORY) to scripts so players halt rather than attack.
+    // 2. Victory celebration lasts 90 frames (~3s), instantly skippable anytime after frame 15 via Confirm, Back, or screen tap.
+    // 3. Victory dances are applied when Battle.fadeOutBattle() calls onCameraFadeoutStart and continuously enforced.
+    if (!(postBattleAction_800bc974 instanceof ExtendedVictoryPostBattleActionInstance)) {
+      postBattleAction_800bc974 = new ExtendedVictoryPostBattleActionInstance(
+          (VictoryPostBattleAction) postBattleAction_800bc974.action, 90);
+      LOGGER.info("TvvlrMultimod: Extended victory screen duration to 90 frames for victory dance (skippable via tap/confirm/back)");
+    }
+
+    applyVictoryDances(battle);
+  }
+
+  private static void applyVictoryDances(final Battle battle) {
+    if (battleState_8006e398 == null || battleState_8006e398.alivePlayerBents_eac == null) {
+      return;
+    }
+
+    try {
+      final int aliveCount = battleState_8006e398.alivePlayerBents_eac.size();
+      for (int i = 0; i < aliveCount; i++) {
+        final ScriptState<PlayerBattleEntity> state = battleState_8006e398.alivePlayerBents_eac.get(i);
+        if (state == null || state.innerStruct_00 == null) {
+          continue;
+        }
+        final PlayerBattleEntity playerBent = state.innerStruct_00;
+        final int charId = playerBent.charId_272;
+        final DanceType dance = DanceModifierStorage.getDanceByCharId(charId);
+        final TmdAnimationFile danceAnim = ProceduralDanceSynthesizer.getDanceAnimation(charId, dance != null ? dance : DanceType.DEFAULT);
+        if (danceAnim != null) {
+          if (playerBent.combatant_144 != null) {
+            final CombatantAsset0c.AnimType customAsset15 = new CombatantAsset0c.AnimType(danceAnim);
+            customAsset15.type_0a = 1;
+            customAsset15.isLoaded_0b = true;
+            customAsset15._09 = 1;
+            playerBent.combatant_144.assets_14[15] = customAsset15;
+
+            final CombatantAsset0c.AnimType customAsset31 = new CombatantAsset0c.AnimType(danceAnim);
+            customAsset31.type_0a = 1;
+            customAsset31.isLoaded_0b = true;
+            customAsset31._09 = 1;
+            playerBent.combatant_144.assets_14[31] = customAsset31;
+
+            playerBent.combatant_144.assets_14[10] = customAsset15;
+          }
+          if (playerBent.model_148 != null) {
+            if (playerBent.loadingAnimIndex_26e != 15 && playerBent.loadingAnimIndex_26e != 31) {
+              state.clearFlag(BattleEntity27c.FLAG_ANIMATE_ONCE | BattleEntity27c.FLAG_HIDE);
+              loadModelStandardAnimation(playerBent.model_148, danceAnim);
+              playerBent.model_148.animationState_9c = 1;
+              playerBent.loadingAnimIndex_26e = 15;
+            }
+          }
+        }
+      }
+      if (!victoryDancesApplied) {
+        victoryDancesApplied = true;
+        LOGGER.info("TvvlrMultimod: Successfully applied victory dances into slots 15 & 31 for %d alive players", aliveCount);
+      }
+    } catch (final Throwable t) {
+      LOGGER.error("TvvlrMultimod: Failed to apply combat victory dances", t);
     }
   }
 
